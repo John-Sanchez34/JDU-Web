@@ -135,7 +135,7 @@ Then run `npm install`.
     "paths": { "@/*": ["./*"] }
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
-  "exclude": ["node_modules", "e2e"]
+  "exclude": ["node_modules"]
 }
 ```
 
@@ -190,8 +190,13 @@ build/
 next-env.d.ts
 test-results/
 playwright-report/
+.superpowers/
 .DS_Store
 ```
+
+`drizzle/` is deliberately **not** ignored — migrations are source and must be
+committed. `.superpowers/` holds scratch coordination files and must be
+ignored, or `git add -A` in Step 9 would commit them.
 
 `.env.example`:
 
