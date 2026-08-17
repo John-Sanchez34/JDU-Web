@@ -5,6 +5,7 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["tests/**/*.test.ts"],
+    setupFiles: ["tests/setup/env.ts"],
     // Integration tests share one Postgres database: the harness migrates it on
     // first use and TRUNCATEs it between tests. Vitest runs each test file in
     // its own worker process by default, so parallel files race — two workers
