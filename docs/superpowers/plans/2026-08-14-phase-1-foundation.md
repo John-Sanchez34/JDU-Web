@@ -15,13 +15,17 @@
 - **Money is always integer cents.** Every monetary value in the database, in
   application code, and in test fixtures is an integer count of cents.
   Floating-point numbers are never used for money. Dollars appear only at the
-  display boundary.
+  display boundary. Class prices are *displayed* values — nothing in the system
+  sums or accumulates them.
 - **Family-scoped queries take `familyId` as a required first parameter.** Any
-  query function that reads family-owned data (students, enrollments, invoices)
+  query function that reads family-owned data (students, enrollments)
   must accept `familyId: string` as its first argument and filter on it in SQL.
   Never filter in application code after fetching.
-- **No card data ever touches this application.** Phase 1 stores no payment
-  information at all. Do not add payment columns, forms, or fields.
+- **This application never collects or tracks money.** Payment happens in
+  person at the studio, and the site's only involvement with money is
+  displaying what a class costs. Do not add payment columns, forms, or fields;
+  do not add invoice, balance, or payment-record tables. This is a permanent
+  product rule, not a Phase 1 restriction — no later phase relaxes it.
 - **Dates are handled in UTC.** Class dates are stored as Postgres `date` and
   manipulated in code as `YYYY-MM-DD` strings or UTC `Date` objects. Never use
   local-timezone `Date` constructors for schedule math — a studio in a
@@ -647,7 +651,7 @@ required means a scoping mistake fails to compile.
 `db/schema/families.ts`:
 
 ```ts
-import { boolean, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 
 export const families = pgTable("families", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -658,9 +662,6 @@ export const families = pgTable("families", {
   city: text("city"),
   state: text("state"),
   postalCode: text("postal_code"),
-  // Populated in Phase 3. Nullable and unused until then.
-  stripeCustomerId: text("stripe_customer_id"),
-  autopayEnabled: boolean("autopay_enabled").notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -3502,8 +3503,9 @@ export default async function PortalHome() {
         </Link>
       </p>
       <p className="mt-8 text-sm text-gray-600">
-        Class enrollment and billing arrive in a future update. To enroll now,
-        please contact the studio.
+        Online class enrollment arrives in a future update. To enroll now,
+        please contact the studio. Payment is always handled in person at the
+        studio.
       </p>
     </section>
   );
@@ -4517,9 +4519,14 @@ reading the output — not by assuming:
 
 ## What Phase 1 deliberately does not do
 
-No money moves. There is no enrollment button, no invoice, no Stripe
-integration, and no `stripe` dependency in `package.json`. The
-`stripe_customer_id` and `seats_taken` columns exist but stay unused — they are
-here so Phase 2 and Phase 3 add behavior rather than restructure tables.
-Families who want to enroll during Phase 1 contact the studio directly, and
-staff record it manually.
+No money moves, and none ever will — payment is collected in person at the
+studio, and this application has no payment integration, no invoices, and no
+balances by design rather than by sequencing. Class prices are displayed so
+families know what a class costs, and that is the full extent of the system's
+involvement with money.
+
+There is also no enrollment button in Phase 1. The `seats_taken` column exists
+but stays at zero — it is here so Phase 2 adds behavior rather than
+restructuring the table. Families who want to enroll during Phase 1 contact the
+studio directly and staff record it manually, which is the same thing Phase 2
+automates.
