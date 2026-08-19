@@ -149,6 +149,47 @@ body {
   }
 
   /*
+   * Form controls. Inputs sit on the panel tone rather than the floor so a
+   * field reads as a place to write, and the focus ring is the shared maple
+   * outline every other control uses.
+   */
+  .label {
+    display: block;
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--color-chalk);
+  }
+
+  .input {
+    display: block;
+    width: 100%;
+    margin-top: 0.5rem;
+    padding: 0.625rem 0.75rem;
+    min-height: 2.75rem;
+    border: 1px solid color-mix(in srgb, var(--color-barre) 45%, transparent);
+    border-radius: 0.375rem;
+    background-color: var(--color-panel);
+    color: var(--color-chalk);
+    font: inherit;
+    transition: border-color 160ms ease;
+  }
+
+  .input:hover {
+    border-color: var(--color-barre);
+  }
+
+  .input::placeholder {
+    color: var(--color-barre);
+  }
+
+  .hint {
+    margin-top: 0.5rem;
+    display: block;
+    font-size: 0.75rem;
+    color: var(--color-mirror);
+  }
+
+  /*
    * Daylight falling across the mirrored wall. Deliberately faint — it should
    * read as room light, not as a gradient.
    */
