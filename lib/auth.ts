@@ -16,7 +16,10 @@ export const auth = betterAuth({
 
   emailAndPassword: {
     enabled: true,
-    requireEmailVerification: true,
+    // Verification is always required outside the E2E suite. The flag is set
+    // only by playwright.config.ts, never in .env.
+    requireEmailVerification:
+      process.env.E2E_SKIP_EMAIL_VERIFICATION !== "true",
     minPasswordLength: 10,
   },
 
@@ -24,6 +27,7 @@ export const auth = betterAuth({
     sendOnSignUp: true,
     autoSignInAfterVerification: true,
     sendVerificationEmail: async ({ user, url }) => {
+      if (process.env.E2E_SKIP_EMAIL_VERIFICATION === "true") return;
       await sendEmail({
         to: user.email,
         subject: "Confirm your email address",
