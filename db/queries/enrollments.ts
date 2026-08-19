@@ -1,4 +1,4 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { classOfferings, enrollments, seasons, students, type Enrollment } from "@/db/schema";
 import { todayIso } from "@/lib/dates";
 import { recordAudit } from "./audit-log";
@@ -208,6 +208,59 @@ export async function releaseEnrollment(
       entityType: "enrollment",
       entityId: row.id,
       before: { status: before.status },
+      after: { status: row.status },
+    });
+
+    return { ok: true, enrollment: row } as const;
+  });
+}
+
+/**
+ * A parent withdrawing their own student. The seat is freed immediately so
+ * another family can take it.
+ *
+ * Ownership is enforced in SQL through a subquery on `students`, not by
+ * fetching the row and comparing in application code — same rule as every other
+ * family-scoped query here. An enrollment belonging to another family is
+ * indistinguishable from one that does not exist.
+ */
+export async function withdrawEnrollment(
+  db: Database,
+  familyId: string,
+  input: TransitionInput,
+): Promise<TransitionResult> {
+  return db.transaction(async (tx) => {
+    const [row] = await tx
+      .update(enrollments)
+      .set({ status: "withdrawn", endDate: todayIso(), updatedAt: new Date() })
+      .where(
+        and(
+          eq(enrollments.id, input.enrollmentId),
+          inArray(enrollments.status, ["pending", "active"]),
+          sql`${enrollments.studentId} IN (
+            SELECT ${students.id} FROM ${students} WHERE ${students.familyId} = ${familyId}
+          )`,
+        ),
+      )
+      .returning();
+    if (!row) return { ok: false, reason: "not-found" } as const;
+
+    await tx
+      .update(classOfferings)
+      .set({ seatsTaken: sql`${classOfferings.seatsTaken} - 1`, updatedAt: new Date() })
+      .where(
+        and(
+          eq(classOfferings.id, row.classOfferingId),
+          sql`${classOfferings.seatsTaken} > 0`,
+        ),
+      );
+
+    await recordAudit(tx, {
+      actorUserId: input.actorUserId,
+      action: "enrollment.withdrawn",
+      entityType: "enrollment",
+      entityId: row.id,
+      before: { status: "pending-or-active" },
       after: { status: row.status },
     });
 
