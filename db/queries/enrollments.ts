@@ -1,5 +1,14 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
-import { classOfferings, enrollments, seasons, students, type Enrollment } from "@/db/schema";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import {
+  classOfferings,
+  enrollments,
+  families,
+  seasons,
+  students,
+  type DayOfWeek,
+  type Enrollment,
+  type EnrollmentStatus,
+} from "@/db/schema";
 import { todayIso } from "@/lib/dates";
 import { recordAudit } from "./audit-log";
 import type { Database, Transaction } from "./executor";
@@ -278,4 +287,128 @@ export async function withdrawEnrollment(
 
     return { ok: true, enrollment: row } as const;
   });
+}
+
+// ---------------------------------------------------------------------------
+// Reads
+//
+// Everything below is read-only: no transitions, no mutations. These are the
+// three views the UI needs — the staff confirmation queue, one class's
+// roster, and one family's own enrollment history.
+// ---------------------------------------------------------------------------
+
+export type PendingRequest = {
+  enrollmentId: string;
+  requestedAt: Date;
+  studentId: string;
+  studentFirstName: string;
+  studentLastName: string;
+  familyName: string;
+  classOfferingId: string;
+  className: string;
+  monthlyPriceCents: number;
+  seasonFeeCents: number;
+};
+
+/**
+ * The staff confirmation queue, oldest first.
+ *
+ * Order is the mitigation for holds that never expire: the longest-waiting
+ * request is the first thing staff see. See §4 "Seat holds never expire".
+ */
+export async function listPendingRequests(db: Database): Promise<PendingRequest[]> {
+  return db
+    .select({
+      enrollmentId: enrollments.id,
+      requestedAt: enrollments.requestedAt,
+      studentId: students.id,
+      studentFirstName: students.firstName,
+      studentLastName: students.lastName,
+      familyName: families.name,
+      classOfferingId: classOfferings.id,
+      className: classOfferings.name,
+      monthlyPriceCents: classOfferings.monthlyPriceCents,
+      seasonFeeCents: classOfferings.seasonFeeCents,
+    })
+    .from(enrollments)
+    .innerJoin(students, eq(enrollments.studentId, students.id))
+    .innerJoin(families, eq(students.familyId, families.id))
+    .innerJoin(classOfferings, eq(enrollments.classOfferingId, classOfferings.id))
+    .where(eq(enrollments.status, "pending"))
+    .orderBy(asc(enrollments.requestedAt), asc(enrollments.id));
+}
+
+export type RosterEntry = {
+  enrollmentId: string;
+  status: EnrollmentStatus;
+  studentFirstName: string;
+  studentLastName: string;
+  familyName: string;
+  requestedAt: Date;
+};
+
+/** Everyone holding a seat in one class — pending and active alike. */
+export async function listRoster(db: Database, offeringId: string): Promise<RosterEntry[]> {
+  return db
+    .select({
+      enrollmentId: enrollments.id,
+      status: enrollments.status,
+      studentFirstName: students.firstName,
+      studentLastName: students.lastName,
+      familyName: families.name,
+      requestedAt: enrollments.requestedAt,
+    })
+    .from(enrollments)
+    .innerJoin(students, eq(enrollments.studentId, students.id))
+    .innerJoin(families, eq(students.familyId, families.id))
+    .where(
+      and(
+        eq(enrollments.classOfferingId, offeringId),
+        inArray(enrollments.status, ["pending", "active"]),
+      ),
+    )
+    .orderBy(asc(students.lastName), asc(students.firstName));
+}
+
+export type FamilyEnrollment = {
+  enrollmentId: string;
+  status: EnrollmentStatus;
+  requestedAt: Date;
+  studentId: string;
+  studentFirstName: string;
+  className: string;
+  dayOfWeek: DayOfWeek;
+  startTime: string;
+  endTime: string;
+  monthlyPriceCents: number;
+  seasonFeeCents: number;
+};
+
+/**
+ * Every enrollment belonging to one family, newest first, including withdrawn
+ * and released rows so a parent can see what happened.
+ */
+export async function listFamilyEnrollments(
+  db: Database,
+  familyId: string,
+): Promise<FamilyEnrollment[]> {
+  return db
+    .select({
+      enrollmentId: enrollments.id,
+      status: enrollments.status,
+      requestedAt: enrollments.requestedAt,
+      studentId: students.id,
+      studentFirstName: students.firstName,
+      className: classOfferings.name,
+      dayOfWeek: classOfferings.dayOfWeek,
+      startTime: classOfferings.startTime,
+      endTime: classOfferings.endTime,
+      monthlyPriceCents: classOfferings.monthlyPriceCents,
+      seasonFeeCents: classOfferings.seasonFeeCents,
+    })
+    .from(enrollments)
+    .innerJoin(students, eq(enrollments.studentId, students.id))
+    .innerJoin(classOfferings, eq(enrollments.classOfferingId, classOfferings.id))
+    .where(eq(students.familyId, familyId))
+    .orderBy(desc(enrollments.requestedAt));
 }
