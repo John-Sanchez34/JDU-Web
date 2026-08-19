@@ -1,8 +1,9 @@
 import { headers } from "next/headers";
 import { forbidden, redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
+import type { Role } from "@/lib/roles";
 
-export type Role = "parent" | "staff" | "admin";
+export type { Role };
 
 export type SessionUser = {
   id: string;

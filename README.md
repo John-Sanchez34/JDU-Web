@@ -103,6 +103,7 @@ season and some classes — see [Making yourself an admin](#making-yourself-an-a
 | `npm run db:generate` | Generate a migration from schema changes |
 | `npm run db:migrate` | Apply pending migrations |
 | `npm run db:studio` | Browse the database in Drizzle Studio |
+| `npm run set-role` | Set an account's role (see "Making yourself an admin") |
 
 ## Testing
 
@@ -189,8 +190,19 @@ account is promoted by hand.
 
 Sign up through the site, verify your email, then run:
 
-```sql
-UPDATE "user" SET role = 'admin' WHERE email = 'you@example.com';
+```bash
+npm run set-role -- you@example.com admin
+```
+
+The command prints the change it made (`parent -> admin`), refuses any role
+outside `parent`, `staff`, and `admin`, and tells you if no account has that
+email. Run it again with `parent` to revoke access when someone leaves.
+
+It reads `DATABASE_URL` from `.env`; override it on the command line to target
+another database:
+
+```bash
+DATABASE_URL="postgres://..." npm run set-role -- you@example.com admin
 ```
 
 Sign out and back in so the session picks up the new role. You can then reach
