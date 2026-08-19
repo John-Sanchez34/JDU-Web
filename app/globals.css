@@ -1,1 +1,195 @@
 @import "tailwindcss";
+
+/*
+ * Studio floor.
+ *
+ * The palette is taken from the room: black marley vinyl laid over a maple
+ * sprung floor, a mirrored wall reflecting cool daylight, an aluminum barre,
+ * chalk and rosin dust. Graphite is the ground, maple is the only accent, and
+ * the barre — a hairline with rounded caps — is the one structural device that
+ * repeats across every page.
+ */
+@theme {
+  --color-floor: #14161a;
+  --color-panel: #1d2026;
+  --color-panel-lit: #262b34;
+  --color-barre: #6e7681;
+  --color-mirror: #a2aab4;
+  --color-chalk: #f2f0ec;
+  --color-maple: #d89a4e;
+  --color-maple-deep: #b57a33;
+  --color-alarm: #e8705c;
+
+  --font-display: var(--font-archivo), "Archivo", ui-sans-serif, system-ui,
+    sans-serif;
+  --font-sans: var(--font-public-sans), "Public Sans", ui-sans-serif, system-ui,
+    sans-serif;
+  --font-mono: var(--font-plex-mono), "IBM Plex Mono", ui-monospace, monospace;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  background-color: var(--color-floor);
+  color: var(--color-chalk);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background-color: var(--color-maple);
+  color: var(--color-floor);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-maple);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
+@layer components {
+  /*
+   * The barre. A hand rests on it, so it has rounded caps and sits at hand
+   * height under whatever it supports. Used as the hero underline, the section
+   * divider, and the nav hover mark.
+   */
+  .barre {
+    display: block;
+    height: 2px;
+    border-radius: 999px;
+    background-color: var(--color-barre);
+  }
+
+  /*
+   * The hero barre draws left to right on load, like a hand sliding along it.
+   * Fill mode is `backwards`, not `both`: the last keyframe already matches the
+   * element's resting style, so nothing stays stuck invisible if the animation
+   * is interrupted or never runs.
+   */
+  .barre-draw {
+    transform-origin: left center;
+    animation: barre-slide 600ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
+  }
+
+  /* Display type rises into place, the way a dancer comes up out of a plié. */
+  .rise {
+    animation: rise 500ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
+  }
+
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 0.6875rem;
+    font-weight: 500;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--color-maple);
+  }
+
+  /* Times, prices, ages, counts — anything that should align in a column. */
+  .tabular {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+  }
+
+  .display {
+    font-family: var(--font-display);
+    font-weight: 800;
+    font-stretch: 125%;
+    letter-spacing: -0.02em;
+    line-height: 0.95;
+    text-wrap: balance;
+  }
+
+  .panel {
+    background-color: var(--color-panel);
+    border: 1px solid color-mix(in srgb, var(--color-barre) 28%, transparent);
+    border-radius: 0.5rem;
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 2.875rem;
+    padding-inline: 1.5rem;
+    border-radius: 999px;
+    font-weight: 600;
+    font-size: 0.9375rem;
+    transition:
+      background-color 160ms ease,
+      border-color 160ms ease,
+      color 160ms ease,
+      transform 160ms ease;
+  }
+
+  .btn:active {
+    transform: translateY(1px);
+  }
+
+  .btn-solid {
+    background-color: var(--color-maple);
+    color: var(--color-floor);
+  }
+
+  .btn-solid:hover {
+    background-color: var(--color-maple-deep);
+  }
+
+  .btn-ghost {
+    border: 1px solid var(--color-barre);
+    color: var(--color-chalk);
+  }
+
+  .btn-ghost:hover {
+    border-color: var(--color-maple);
+    color: var(--color-maple);
+  }
+
+  /*
+   * Daylight falling across the mirrored wall. Deliberately faint — it should
+   * read as room light, not as a gradient.
+   */
+  .mirror-glare {
+    background-image: radial-gradient(
+      120% 90% at 85% -10%,
+      color-mix(in srgb, var(--color-chalk) 7%, transparent) 0%,
+      transparent 60%
+    );
+  }
+}
+
+@keyframes barre-slide {
+  from {
+    transform: scaleX(0);
+    opacity: 0;
+  }
+  to {
+    transform: scaleX(1);
+    opacity: 1;
+  }
+}
+
+@keyframes rise {
+  from {
+    transform: translateY(0.6em);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .barre-draw,
+  .rise {
+    animation: none;
+  }
+
+  .btn:active {
+    transform: none;
+  }
+}
