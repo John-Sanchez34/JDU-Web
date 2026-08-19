@@ -13,7 +13,7 @@ import logo from "@/public/logo-jdu.png";
  */
 export function StudioWordmark({
   href,
-  markClassName = "h-11 w-auto",
+  markClassName = "h-16 w-auto",
   textClassName = "text-base sm:text-lg",
   priority = false,
 }: {

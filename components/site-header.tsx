@@ -38,7 +38,12 @@ export async function SiteHeader() {
         aria-label="Main"
         className="mx-auto flex max-w-5xl flex-col gap-3 px-6 py-4 sm:flex-row sm:items-center sm:justify-between sm:gap-8"
       >
-        <StudioWordmark href="/" priority markClassName="h-16 w-auto" />
+        <StudioWordmark
+          href="/"
+          priority
+          markClassName="h-24 w-auto"
+          textClassName="text-lg sm:text-xl"
+        />
         <ul className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
           {links.map((link) => (
             <li key={link.href}>
