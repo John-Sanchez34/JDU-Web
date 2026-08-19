@@ -1,5 +1,6 @@
 import { and, eq, sql } from "drizzle-orm";
 import { classOfferings, enrollments, seasons, students, type Enrollment } from "@/db/schema";
+import { todayIso } from "@/lib/dates";
 import { recordAudit } from "./audit-log";
 import type { Database } from "./executor";
 
@@ -118,11 +119,6 @@ export type TransitionInput = {
 export type TransitionResult =
   | { ok: true; enrollment: Enrollment }
   | { ok: false; reason: "not-found" | "not-pending" };
-
-/** `YYYY-MM-DD` in UTC, matching the convention in `lib/dates.ts`. */
-function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
-}
 
 /**
  * Marks a pending request confirmed after staff have taken payment in person.
