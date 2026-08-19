@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { getSessionUser } from "@/lib/guards";
-import { studio } from "@/content/studio";
+import { StudioWordmark } from "@/components/studio-wordmark";
 
 const links = [
   { href: "/classes", label: "Classes" },
@@ -38,12 +38,7 @@ export async function SiteHeader() {
         aria-label="Main"
         className="mx-auto flex max-w-5xl flex-col gap-3 px-6 py-4 sm:flex-row sm:items-center sm:justify-between sm:gap-8"
       >
-        <Link
-          href="/"
-          className="display text-xl uppercase tracking-tight text-chalk"
-        >
-          {studio.name}
-        </Link>
+        <StudioWordmark href="/" priority markClassName="h-16 w-auto" />
         <ul className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
           {links.map((link) => (
             <li key={link.href}>

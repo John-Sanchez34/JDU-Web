@@ -1,5 +1,4 @@
-import Link from "next/link";
-import { studio } from "@/content/studio";
+import { StudioWordmark } from "@/components/studio-wordmark";
 
 /**
  * Auth pages stand outside the public shell — no nav to wander into
@@ -14,12 +13,7 @@ export default function AuthLayout({
   return (
     <div className="mirror-glare flex min-h-screen flex-col">
       <header className="mx-auto w-full max-w-5xl px-6 py-6">
-        <Link
-          href="/"
-          className="display text-xl uppercase tracking-tight text-chalk"
-        >
-          {studio.name}
-        </Link>
+        <StudioWordmark href="/" priority />
       </header>
 
       {/* The form hangs off the same left axis as the wordmark and as every

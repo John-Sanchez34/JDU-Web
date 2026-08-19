@@ -4,7 +4,7 @@
  * values with the real studio details before launch.
  */
 export const studio = {
-  name: "Dance Studio",
+  name: "Jodi's Dance Unlimited",
   /** Two or three words. It is set very large, so a full sentence will not fit. */
   heroHeadline: "Every age. Every level.",
   tagline: "Classes for every age, from first steps to advanced technique.",
