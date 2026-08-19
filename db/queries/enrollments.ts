@@ -2,7 +2,7 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import { classOfferings, enrollments, seasons, students, type Enrollment } from "@/db/schema";
 import { todayIso } from "@/lib/dates";
 import { recordAudit } from "./audit-log";
-import type { Database } from "./executor";
+import type { Database, Transaction } from "./executor";
 
 export type RequestInput = {
   studentId: string;
@@ -166,6 +166,22 @@ export async function confirmEnrollment(
 }
 
 /**
+ * Returns one seat to a class. Callers must only reach this after a
+ * status-guarded UPDATE actually moved a row, so a seat is never freed twice.
+ */
+async function freeSeat(tx: Transaction, classOfferingId: string): Promise<void> {
+  await tx
+    .update(classOfferings)
+    .set({ seatsTaken: sql`${classOfferings.seatsTaken} - 1`, updatedAt: new Date() })
+    .where(
+      and(
+        eq(classOfferings.id, classOfferingId),
+        sql`${classOfferings.seatsTaken} > 0`,
+      ),
+    );
+}
+
+/**
  * Releases a pending request that never turned into a payment, returning the
  * seat to the class.
  *
@@ -192,15 +208,7 @@ export async function releaseEnrollment(
       .returning();
     if (!row) return { ok: false, reason: "not-pending" } as const;
 
-    await tx
-      .update(classOfferings)
-      .set({ seatsTaken: sql`${classOfferings.seatsTaken} - 1`, updatedAt: new Date() })
-      .where(
-        and(
-          eq(classOfferings.id, row.classOfferingId),
-          sql`${classOfferings.seatsTaken} > 0`,
-        ),
-      );
+    await freeSeat(tx, row.classOfferingId);
 
     await recordAudit(tx, {
       actorUserId: input.actorUserId,
@@ -230,6 +238,18 @@ export async function withdrawEnrollment(
   input: TransitionInput,
 ): Promise<TransitionResult> {
   return db.transaction(async (tx) => {
+    /*
+     * Unscoped by family on purpose: this is only ever used for the audit
+     * snapshot's real prior status, never to decide the result. Deciding
+     * "not-found" stays entirely with the UPDATE below, so another family's
+     * enrollment is still indistinguishable from one that does not exist.
+     */
+    const [before] = await tx
+      .select()
+      .from(enrollments)
+      .where(eq(enrollments.id, input.enrollmentId))
+      .limit(1);
+
     const [row] = await tx
       .update(enrollments)
       .set({ status: "withdrawn", endDate: todayIso(), updatedAt: new Date() })
@@ -245,22 +265,14 @@ export async function withdrawEnrollment(
       .returning();
     if (!row) return { ok: false, reason: "not-found" } as const;
 
-    await tx
-      .update(classOfferings)
-      .set({ seatsTaken: sql`${classOfferings.seatsTaken} - 1`, updatedAt: new Date() })
-      .where(
-        and(
-          eq(classOfferings.id, row.classOfferingId),
-          sql`${classOfferings.seatsTaken} > 0`,
-        ),
-      );
+    await freeSeat(tx, row.classOfferingId);
 
     await recordAudit(tx, {
       actorUserId: input.actorUserId,
       action: "enrollment.withdrawn",
       entityType: "enrollment",
       entityId: row.id,
-      before: { status: "pending-or-active" },
+      before: { status: before!.status },
       after: { status: row.status },
     });
 
