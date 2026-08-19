@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useState } from "react";
 import { signUp } from "@/lib/auth-client";
 
 export default function SignUpPage() {
@@ -30,34 +31,68 @@ export default function SignUpPage() {
   }
 
   return (
-    <main className="mx-auto max-w-md p-8">
-      <h1 className="text-2xl font-semibold">Create your family account</h1>
-      <form onSubmit={handleSubmit} className="mt-6 space-y-4">
+    <main>
+      {/* One account covers the whole family — worth saying before they start. */}
+      <p className="eyebrow">One account per family</p>
+      <h1 className="display mt-3 text-4xl uppercase text-chalk">
+        Create account
+      </h1>
+      <span aria-hidden className="barre mt-6 opacity-40" />
+
+      <form onSubmit={handleSubmit} className="mt-10 space-y-6">
         <label className="block">
-          <span className="text-sm font-medium">Your name</span>
-          <input name="name" required autoComplete="name"
-            className="mt-1 w-full rounded border px-3 py-2" />
+          <span className="label">Your name</span>
+          <input name="name" required autoComplete="name" className="input" />
         </label>
+
         <label className="block">
-          <span className="text-sm font-medium">Email</span>
-          <input name="email" type="email" required autoComplete="email"
-            className="mt-1 w-full rounded border px-3 py-2" />
+          <span className="label">Email</span>
+          <input
+            name="email"
+            type="email"
+            required
+            autoComplete="email"
+            className="input"
+          />
         </label>
+
         <label className="block">
-          <span className="text-sm font-medium">Password</span>
-          <input name="password" type="password" required minLength={10}
+          <span className="label">Password</span>
+          <input
+            name="password"
+            type="password"
+            required
+            minLength={10}
             autoComplete="new-password"
-            className="mt-1 w-full rounded border px-3 py-2" />
-          <span className="mt-1 block text-xs text-gray-600">
-            At least 10 characters.
-          </span>
+            className="input"
+          />
+          <span className="hint">At least 10 characters.</span>
         </label>
-        {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
-        <button type="submit" disabled={pending}
-          className="w-full rounded bg-black px-4 py-2 text-white disabled:opacity-50">
+
+        {error && (
+          <p role="alert" className="text-sm font-medium text-alarm">
+            {error}
+          </p>
+        )}
+
+        <button
+          type="submit"
+          disabled={pending}
+          className="btn btn-solid w-full disabled:opacity-50"
+        >
           {pending ? "Creating account…" : "Create account"}
         </button>
       </form>
+
+      <p className="mt-8 text-sm text-mirror">
+        Already have an account?{" "}
+        <Link
+          href="/sign-in"
+          className="font-medium text-maple transition-colors hover:text-chalk"
+        >
+          Sign in
+        </Link>
+      </p>
     </main>
   );
 }

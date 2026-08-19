@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useState } from "react";
 import { signIn } from "@/lib/auth-client";
 
 export default function SignInPage() {
@@ -30,26 +31,58 @@ export default function SignInPage() {
   }
 
   return (
-    <main className="mx-auto max-w-md p-8">
-      <h1 className="text-2xl font-semibold">Sign in</h1>
-      <form onSubmit={handleSubmit} className="mt-6 space-y-4">
+    <main>
+      <p className="eyebrow">Welcome back</p>
+      <h1 className="display mt-3 text-4xl uppercase text-chalk">Sign in</h1>
+      <span aria-hidden className="barre mt-6 opacity-40" />
+
+      <form onSubmit={handleSubmit} className="mt-10 space-y-6">
         <label className="block">
-          <span className="text-sm font-medium">Email</span>
-          <input name="email" type="email" required autoComplete="email"
-            className="mt-1 w-full rounded border px-3 py-2" />
+          <span className="label">Email</span>
+          <input
+            name="email"
+            type="email"
+            required
+            autoComplete="email"
+            className="input"
+          />
         </label>
+
         <label className="block">
-          <span className="text-sm font-medium">Password</span>
-          <input name="password" type="password" required
+          <span className="label">Password</span>
+          <input
+            name="password"
+            type="password"
+            required
             autoComplete="current-password"
-            className="mt-1 w-full rounded border px-3 py-2" />
+            className="input"
+          />
         </label>
-        {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
-        <button type="submit" disabled={pending}
-          className="w-full rounded bg-black px-4 py-2 text-white disabled:opacity-50">
+
+        {error && (
+          <p role="alert" className="text-sm font-medium text-alarm">
+            {error}
+          </p>
+        )}
+
+        <button
+          type="submit"
+          disabled={pending}
+          className="btn btn-solid w-full disabled:opacity-50"
+        >
           {pending ? "Signing in…" : "Sign in"}
         </button>
       </form>
+
+      <p className="mt-8 text-sm text-mirror">
+        New to the studio?{" "}
+        <Link
+          href="/sign-up"
+          className="font-medium text-maple transition-colors hover:text-chalk"
+        >
+          Create an account
+        </Link>
+      </p>
     </main>
   );
 }
