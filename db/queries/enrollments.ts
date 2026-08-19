@@ -109,3 +109,112 @@ export async function requestEnrollment(
     throw error;
   }
 }
+
+export type TransitionInput = {
+  enrollmentId: string;
+  actorUserId: string | null;
+};
+
+export type TransitionResult =
+  | { ok: true; enrollment: Enrollment }
+  | { ok: false; reason: "not-found" | "not-pending" };
+
+/** `YYYY-MM-DD` in UTC, matching the convention in `lib/dates.ts`. */
+function todayIso(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+/**
+ * Marks a pending request confirmed after staff have taken payment in person.
+ *
+ * Deliberately does not touch `seats_taken`: a pending request already holds a
+ * real seat, and the only thing changing here is whether the studio has been
+ * paid.
+ */
+export async function confirmEnrollment(
+  db: Database,
+  input: TransitionInput,
+): Promise<TransitionResult> {
+  return db.transaction(async (tx) => {
+    const [before] = await tx
+      .select()
+      .from(enrollments)
+      .where(eq(enrollments.id, input.enrollmentId))
+      .limit(1);
+    if (!before) return { ok: false, reason: "not-found" } as const;
+
+    const [row] = await tx
+      .update(enrollments)
+      .set({
+        status: "active",
+        confirmedAt: new Date(),
+        confirmedByUserId: input.actorUserId,
+        startDate: todayIso(),
+        updatedAt: new Date(),
+      })
+      .where(and(eq(enrollments.id, input.enrollmentId), eq(enrollments.status, "pending")))
+      .returning();
+    if (!row) return { ok: false, reason: "not-pending" } as const;
+
+    await recordAudit(tx, {
+      actorUserId: input.actorUserId,
+      action: "enrollment.confirmed",
+      entityType: "enrollment",
+      entityId: row.id,
+      before: { status: before.status },
+      after: { status: row.status },
+    });
+
+    return { ok: true, enrollment: row } as const;
+  });
+}
+
+/**
+ * Releases a pending request that never turned into a payment, returning the
+ * seat to the class.
+ *
+ * The status predicate on the UPDATE is what makes this safe against two staff
+ * members acting at once: the seat is only given back when this call is the one
+ * that actually moved the row.
+ */
+export async function releaseEnrollment(
+  db: Database,
+  input: TransitionInput,
+): Promise<TransitionResult> {
+  return db.transaction(async (tx) => {
+    const [before] = await tx
+      .select()
+      .from(enrollments)
+      .where(eq(enrollments.id, input.enrollmentId))
+      .limit(1);
+    if (!before) return { ok: false, reason: "not-found" } as const;
+
+    const [row] = await tx
+      .update(enrollments)
+      .set({ status: "released", endDate: todayIso(), updatedAt: new Date() })
+      .where(and(eq(enrollments.id, input.enrollmentId), eq(enrollments.status, "pending")))
+      .returning();
+    if (!row) return { ok: false, reason: "not-pending" } as const;
+
+    await tx
+      .update(classOfferings)
+      .set({ seatsTaken: sql`${classOfferings.seatsTaken} - 1`, updatedAt: new Date() })
+      .where(
+        and(
+          eq(classOfferings.id, row.classOfferingId),
+          sql`${classOfferings.seatsTaken} > 0`,
+        ),
+      );
+
+    await recordAudit(tx, {
+      actorUserId: input.actorUserId,
+      action: "enrollment.released",
+      entityType: "enrollment",
+      entityId: row.id,
+      before: { status: before.status },
+      after: { status: row.status },
+    });
+
+    return { ok: true, enrollment: row } as const;
+  });
+}
