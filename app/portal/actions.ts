@@ -3,9 +3,12 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { db } from "@/db";
-import { requestEnrollment } from "@/db/queries/enrollments";
+import { requestEnrollment, withdrawEnrollment } from "@/db/queries/enrollments";
 import { createStudent, updateStudent } from "@/db/queries/students";
-import { enrollmentRequestSchema } from "@/lib/enrollment-validation";
+import {
+  enrollmentIdSchema,
+  enrollmentRequestSchema,
+} from "@/lib/enrollment-validation";
 import { requireFamilyId, requireUser } from "@/lib/guards";
 import type { ActionState } from "@/lib/action-state";
 import { studentInputSchema } from "@/lib/validation";
@@ -108,6 +111,39 @@ export async function requestEnrollmentAction(
   // is about the client router cache: without it a parent who navigates back
   // to the catalog is served the cached RSC payload and still reads
   // "2 seats left" for a class their own request just filled.
+  revalidatePath("/portal/enrollments");
+  revalidatePath("/classes");
+  return { error: null };
+}
+
+export async function withdrawEnrollmentAction(
+  _prevState: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const user = await requireUser();
+  const familyId = await requireFamilyId();
+  const parsed = enrollmentIdSchema.safeParse({
+    enrollmentId: String(formData.get("enrollmentId") ?? ""),
+  });
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Please check the form." };
+  }
+
+  const result = await withdrawEnrollment(db, familyId, {
+    enrollmentId: parsed.data.enrollmentId,
+    actorUserId: user.id,
+  });
+
+  // The only reason this query returns is "not-found", because the family
+  // scope and the pending/active guard both live in its UPDATE's WHERE
+  // clause — another family's enrollment and an already-withdrawn one are
+  // deliberately indistinguishable from one that never existed.
+  if (!result.ok) {
+    return { error: "That enrollment could not be withdrawn." };
+  }
+
+  // Withdrawing frees the seat, so the catalog's count is stale for the same
+  // router-cache reason described in requestEnrollmentAction above.
   revalidatePath("/portal/enrollments");
   revalidatePath("/classes");
   return { error: null };
