@@ -3,8 +3,10 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { db } from "@/db";
+import { requestEnrollment } from "@/db/queries/enrollments";
 import { createStudent, updateStudent } from "@/db/queries/students";
-import { requireFamilyId } from "@/lib/guards";
+import { enrollmentRequestSchema } from "@/lib/enrollment-validation";
+import { requireFamilyId, requireUser } from "@/lib/guards";
 import type { ActionState } from "@/lib/action-state";
 import { studentInputSchema } from "@/lib/validation";
 
@@ -68,4 +70,45 @@ export async function updateStudentAction(
 
   revalidatePath("/portal/students");
   redirect("/portal/students");
+}
+
+export async function requestEnrollmentAction(
+  _prevState: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const user = await requireUser();
+  const familyId = await requireFamilyId();
+  const parsed = enrollmentRequestSchema.safeParse({
+    studentId: String(formData.get("studentId") ?? ""),
+    offeringId: String(formData.get("offeringId") ?? ""),
+  });
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Please check the form." };
+  }
+
+  const result = await requestEnrollment(db, familyId, {
+    studentId: parsed.data.studentId,
+    offeringId: parsed.data.offeringId,
+    actorUserId: user.id,
+  });
+
+  if (!result.ok) {
+    // Every branch is a normal outcome a parent can act on, not an exception.
+    const message = {
+      "not-found": "That student could not be found.",
+      closed: "This class is not accepting requests right now.",
+      full: "This class filled up before your request went through.",
+      duplicate: "That student already has a seat in this class.",
+    }[result.reason];
+    return { error: message };
+  }
+
+  // /classes renders dynamically today (its layout's SiteHeader awaits the
+  // session), so the `revalidate = 300` on that page is inert and this call
+  // is about the client router cache: without it a parent who navigates back
+  // to the catalog is served the cached RSC payload and still reads
+  // "2 seats left" for a class their own request just filled.
+  revalidatePath("/portal/enrollments");
+  revalidatePath("/classes");
+  return { error: null };
 }
