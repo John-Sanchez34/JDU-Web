@@ -4,6 +4,7 @@ import { requireStaff } from "@/lib/guards";
 const links = [
   { href: "/admin/seasons", label: "Seasons" },
   { href: "/admin/classes", label: "Classes" },
+  { href: "/admin/enrollments", label: "Requests" },
   { href: "/", label: "Back to site" },
 ];
 
