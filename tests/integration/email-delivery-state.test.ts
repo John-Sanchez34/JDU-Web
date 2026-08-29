@@ -6,6 +6,7 @@ import {
   listRetriableDeliveries,
   markFailed,
   markSent,
+  STUCK_AFTER_MS,
 } from "@/db/queries/email-deliveries";
 import { emailDeliveries } from "@/db/schema";
 
@@ -75,8 +76,10 @@ describe("delivery state", () => {
     expect(claimed!.attempts).toBe(2);
   });
 
-  it("records the provider id when sent", async () => {
-    const row = await insert();
+  it("records the provider id and clears a prior error when sent", async () => {
+    // Started as failed-with-error so the error:null assertion below can
+    // actually fail if that line is ever deleted from markSent.
+    const row = await insert({ status: "failed", error: "boom" });
     await claimForSend(db, row.id);
 
     await markSent(db, row.id, "resend-123");
@@ -107,17 +110,30 @@ describe("delivery state", () => {
 
   it("lists failed rows and rows stuck sending, oldest first", async () => {
     const now = new Date("2026-09-01T12:00:00Z");
-    const stale = new Date(now.getTime() - 20 * 60 * 1000);
+    const cutoff = new Date(now.getTime() - STUCK_AFTER_MS);
+    // Straddle the cutoff by one second on each side so an off-by-one in the
+    // constant or a lt/gt mix-up would flip one of these two rows.
+    const justPastCutoff = new Date(cutoff.getTime() - 1000); // 1s older than the window -> stuck, included
+    const justShortOfCutoff = new Date(cutoff.getTime() + 1000); // 1s younger than the window -> not stuck yet, excluded
     const recent = new Date(now.getTime() - 60 * 1000);
 
     await insert({ status: "sent" });
-    const failed = await insert({ status: "failed", error: "boom" });
-    const stuck = await insert({ status: "sending", updatedAt: stale });
-    await insert({ status: "sending", updatedAt: recent });
     await insert({ status: "queued" });
+    await insert({ status: "sending", updatedAt: justShortOfCutoff });
+    await insert({ status: "sending", updatedAt: recent });
+
+    // Inserted with the newer row first, so a missing or reversed ORDER BY
+    // would hand back this same (wrong) order rather than coincidentally
+    // matching the oldest-first expectation below.
+    const failed = await insert({ status: "failed", error: "boom", createdAt: recent });
+    const stuck = await insert({
+      status: "sending",
+      createdAt: justPastCutoff,
+      updatedAt: justPastCutoff,
+    });
 
     const rows = await listRetriableDeliveries(db, now);
 
-    expect(rows.map((row) => row.id).sort()).toEqual([failed.id, stuck.id].sort());
+    expect(rows.map((row) => row.id)).toEqual([stuck.id, failed.id]);
   });
 });
