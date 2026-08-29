@@ -102,6 +102,16 @@ export async function seedOpenSeasonWithClass(
       // Same reason as `seedSeasonWithClass`: seasons from earlier runs share
       // a start date, and `getCurrentSeason` would break the tie arbitrarily.
       await db.delete(seasons).where(like(seasons.name, "E2E %"));
+
+      // The retry page's empty state ("Everything has been delivered.") is
+      // an assertion about the whole table, not just this run's rows — so a
+      // failed or stuck-sending row left behind by an earlier run of any
+      // suite (e2e or integration, since both point at TEST_DATABASE_URL)
+      // would fail it. Clear it here, in the same branch that clears
+      // seasons, so a second call that adds a class to an existing season
+      // does not wipe deliveries mid-scenario.
+      await db.delete(emailDeliveries);
+
       const season = await createSeason(db, {
         name: `E2E ${year}`,
         startDate: `${year}-01-01`,
