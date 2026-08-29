@@ -5,3 +5,8 @@ import { config } from "dotenv";
 // helpers in `lib/guards.ts` by way of `lib/auth.ts` — throws during module
 // resolution unless the real environment is present first.
 config({ path: ".env" });
+
+// Integration tests exercise the delivery runner end to end. Nothing in a test
+// run may reach the real provider, so the transport is pinned here rather than
+// left to whatever `.env` happens to contain.
+process.env.EMAIL_TRANSPORT = "capture";
