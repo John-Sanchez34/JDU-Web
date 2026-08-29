@@ -2,9 +2,18 @@
 
 import { revalidatePath } from "next/cache";
 import { db } from "@/db";
+import { recordAudit } from "@/db/queries/audit-log";
 import { syncOccurrencesForOffering } from "@/db/queries/class-occurrences";
-import { createOffering, updateOffering } from "@/db/queries/class-offerings";
-import { confirmEnrollment, releaseEnrollment } from "@/db/queries/enrollments";
+import {
+  createOffering,
+  getOffering,
+  updateOffering,
+} from "@/db/queries/class-offerings";
+import {
+  confirmEnrollment,
+  isCheckViolation,
+  releaseEnrollment,
+} from "@/db/queries/enrollments";
 import { createSeason } from "@/db/queries/seasons";
 import type { ActionState } from "@/lib/action-state";
 import { offeringInputSchema, seasonInputSchema } from "@/lib/admin-validation";
@@ -141,5 +150,74 @@ export async function releaseEnrollmentAction(
   // count is stale until it is revalidated too.
   revalidatePath("/admin/enrollments");
   revalidatePath("/classes");
+  return { error: null };
+}
+
+/** The fields §3 requires an audit trail for: capacity and the published prices. */
+function auditedFields(offering: {
+  capacity: number;
+  monthlyPriceCents: number;
+  seasonFeeCents: number;
+  published: boolean;
+}) {
+  return {
+    capacity: offering.capacity,
+    monthlyPriceCents: offering.monthlyPriceCents,
+    seasonFeeCents: offering.seasonFeeCents,
+    published: offering.published,
+  };
+}
+
+export async function updateOfferingAction(
+  _prevState: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const staff = await requireStaff();
+  const raw = toObject(formData);
+  const offeringId = raw.offeringId;
+  if (!offeringId) return { error: "That class could not be found." };
+
+  const parsed = offeringInputSchema.safeParse(raw);
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Please check the form." };
+  }
+
+  const before = await getOffering(db, offeringId);
+  if (!before) return { error: "That class could not be found." };
+
+  try {
+    const after = await updateOffering(db, offeringId, parsed.data);
+
+    /*
+     * Audited because this is the record consulted when a parent says the
+     * price was different when they signed up — see §3.
+     */
+    await recordAudit(db, {
+      actorUserId: staff.id,
+      action: "offering.updated",
+      entityType: "class_offering",
+      entityId: offeringId,
+      before: auditedFields(before),
+      after: after ? auditedFields(after) : null,
+    });
+  } catch (error) {
+    /*
+     * `class_offerings_seats_within_capacity` is the database refusing to
+     * shrink a class below the seats families are already holding. It is
+     * something staff can act on, so it becomes a sentence rather than a 500.
+     */
+    if (isCheckViolation(error)) {
+      return {
+        error:
+          "That capacity is lower than the number of seats already taken. Release requests first.",
+      };
+    }
+    throw error;
+  }
+
+  revalidatePath("/admin/classes");
+  revalidatePath(`/admin/classes/${offeringId}`);
+  revalidatePath("/classes");
+  revalidatePath("/schedule");
   return { error: null };
 }

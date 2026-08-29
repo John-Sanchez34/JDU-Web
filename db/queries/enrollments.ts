@@ -24,16 +24,30 @@ export type RequestResult =
   | { ok: false; reason: "not-found" | "closed" | "full" | "duplicate" };
 
 /**
- * Postgres unique-violation SQLSTATE.
+ * True when `error`, or anything it wraps, carries this Postgres SQLSTATE.
  *
  * drizzle-orm wraps driver errors in a `DrizzleQueryError`, with the raw `pg`
  * error — the one actually carrying `code` — on `.cause`, so the check walks
  * the cause chain rather than trusting the top-level error shape.
  */
-export function isUniqueViolation(error: unknown): boolean {
+function hasSqlState(error: unknown, sqlState: string): boolean {
   if (typeof error !== "object" || error === null) return false;
-  if ("code" in error && error.code === "23505") return true;
-  return "cause" in error && isUniqueViolation(error.cause);
+  if ("code" in error && error.code === sqlState) return true;
+  return "cause" in error && hasSqlState(error.cause, sqlState);
+}
+
+/** Postgres unique-violation SQLSTATE — a second request for the same seat. */
+export function isUniqueViolation(error: unknown): boolean {
+  return hasSqlState(error, "23505");
+}
+
+/**
+ * Postgres check-violation SQLSTATE. The only check that reaches a user is
+ * `class_offerings_seats_within_capacity`, raised when staff try to shrink a
+ * class below the seats already claimed.
+ */
+export function isCheckViolation(error: unknown): boolean {
+  return hasSqlState(error, "23514");
 }
 
 /**
