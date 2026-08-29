@@ -15,23 +15,36 @@ export async function deliverQueued(
   deliveryIds: string[],
 ): Promise<void> {
   for (const deliveryId of deliveryIds) {
-    // Claiming is what makes a double Retry safe: a row already sent, or
-    // already in flight elsewhere, comes back null and is skipped.
-    const delivery = await claimForSend(db, deliveryId);
-    if (!delivery) continue;
-
     try {
-      const { providerMessageId } = await sendEmail({
-        to: delivery.recipientEmail,
-        subject: delivery.subject,
-        text: delivery.bodyText,
-        html: delivery.bodyHtml,
-      });
-      await markSent(db, delivery.id, providerMessageId);
+      // Claiming is what makes a double Retry safe: a row already sent, or
+      // already in flight elsewhere, comes back null and is skipped.
+      const delivery = await claimForSend(db, deliveryId);
+      if (!delivery) continue;
+
+      let result;
+      try {
+        // If the provider rejects this address, we own recording that failure
+        // and moving to the next delivery.
+        result = await sendEmail({
+          to: delivery.recipientEmail,
+          subject: delivery.subject,
+          text: delivery.bodyText,
+          html: delivery.bodyHtml,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        // Provider rejected; record the failure and move to the next delivery.
+        // lib/email.ts already logs the provider error, so we don't duplicate.
+        await markFailed(db, delivery.id, message);
+        continue;
+      }
+
+      // Send succeeded; record the provider's message id.
+      await markSent(db, delivery.id, result.providerMessageId);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error("deliverQueued failed", { deliveryId, message });
-      await markFailed(db, delivery.id, message);
+      // Bookkeeping failed, not the send. Leave the row where it is rather than
+      // claiming to know the outcome, and keep going with the rest of the batch.
+      console.error("deliverQueued: could not record a delivery outcome", { deliveryId, error });
     }
   }
 }
