@@ -19,7 +19,10 @@ import {
 import { createSeason } from "@/db/queries/seasons";
 import type { ActionState } from "@/lib/action-state";
 import { offeringInputSchema, seasonInputSchema } from "@/lib/admin-validation";
-import { enrollmentIdSchema } from "@/lib/enrollment-validation";
+import {
+  deliveryIdSchema,
+  enrollmentIdSchema,
+} from "@/lib/enrollment-validation";
 import { requireStaff } from "@/lib/guards";
 
 /*
@@ -225,5 +228,26 @@ export async function updateOfferingAction(
   revalidatePath(`/admin/classes/${offeringId}`);
   revalidatePath("/classes");
   revalidatePath("/schedule");
+  return { error: null };
+}
+
+export async function retryDeliveryAction(
+  _prevState: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  await requireStaff();
+  const parsed = deliveryIdSchema.safeParse(toObject(formData));
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Please check the form." };
+  }
+
+  /*
+   * Awaited, not deferred: a person pressed Retry and is waiting to see
+   * whether it worked. `deliverQueued` never throws, and a row that someone
+   * else already sent is skipped by the claim.
+   */
+  await deliverQueued(db, [parsed.data.deliveryId]);
+
+  revalidatePath("/admin/emails");
   return { error: null };
 }

@@ -5,6 +5,7 @@ const links = [
   { href: "/admin/seasons", label: "Seasons" },
   { href: "/admin/classes", label: "Classes" },
   { href: "/admin/enrollments", label: "Requests" },
+  { href: "/admin/emails", label: "Email" },
   { href: "/", label: "Back to site" },
 ];
 

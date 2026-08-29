@@ -8,3 +8,7 @@ export const enrollmentRequestSchema = z.object({
 export const enrollmentIdSchema = z.object({
   enrollmentId: z.uuid("That enrollment could not be found."),
 });
+
+export const deliveryIdSchema = z.object({
+  deliveryId: z.uuid("That delivery could not be found."),
+});
