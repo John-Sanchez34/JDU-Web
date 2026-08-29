@@ -1,3 +1,4 @@
+import Link from "next/link";
 import {
   createOfferingAction,
   publishOfferingAction,
@@ -137,7 +138,12 @@ export default async function AdminClassesPage() {
             >
               <div>
                 <p className="font-semibold text-chalk">
-                  {offering.name}
+                  <Link
+                    href={`/admin/classes/${offering.id}`}
+                    className="transition-colors hover:text-maple"
+                  >
+                    {offering.name}
+                  </Link>
                   {!offering.published && (
                     <span className="eyebrow ml-3 text-barre">Draft</span>
                   )}

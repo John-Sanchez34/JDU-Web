@@ -4,6 +4,7 @@ import { requireUser } from "@/lib/guards";
 const links = [
   { href: "/portal", label: "Overview" },
   { href: "/portal/students", label: "Students" },
+  { href: "/portal/enrollments", label: "Classes" },
   { href: "/", label: "Back to site" },
 ];
 
