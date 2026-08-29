@@ -1,8 +1,10 @@
 "use server";
 
+import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { db } from "@/db";
+import { deliverQueued } from "@/lib/notifications/deliver";
 import { requestEnrollment, withdrawEnrollment } from "@/db/queries/enrollments";
 import { createStudent, updateStudent } from "@/db/queries/students";
 import {
@@ -105,6 +107,14 @@ export async function requestEnrollmentAction(
     }[result.reason];
     return { error: message };
   }
+
+  /*
+   * The rows are already committed; sending them is what is deferred. Doing it
+   * here rather than awaiting inline means a slow or failing provider cannot
+   * make "Request seat" appear to hang, and a failure lands on the delivery
+   * row where /admin/emails can show it.
+   */
+  after(() => deliverQueued(db, result.deliveryIds));
 
   // /classes renders dynamically today (its layout's SiteHeader awaits the
   // session), so the `revalidate = 300` on that page is inert and this call

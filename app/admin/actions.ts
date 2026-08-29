@@ -1,7 +1,9 @@
 "use server";
 
+import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { db } from "@/db";
+import { deliverQueued } from "@/lib/notifications/deliver";
 import { recordAudit } from "@/db/queries/audit-log";
 import { syncOccurrencesForOffering } from "@/db/queries/class-occurrences";
 import {
@@ -124,6 +126,8 @@ export async function confirmEnrollmentAction(
   });
   if (!result.ok) return { error: transitionError(result.reason) };
 
+  after(() => deliverQueued(db, result.deliveryIds));
+
   // Confirming does not move `seats_taken` — the pending request already held
   // the seat — so only the queue itself goes stale here.
   revalidatePath("/admin/enrollments");
@@ -145,6 +149,8 @@ export async function releaseEnrollmentAction(
     actorUserId: staff.id,
   });
   if (!result.ok) return { error: transitionError(result.reason) };
+
+  after(() => deliverQueued(db, result.deliveryIds));
 
   // Releasing gives the seat back, so the public catalog's remaining-seat
   // count is stale until it is revalidated too.
