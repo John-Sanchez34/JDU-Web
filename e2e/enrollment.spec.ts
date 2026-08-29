@@ -1,5 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import {
+  deliveriesForEnrollment,
+  latestEnrollmentIdFor,
   promoteToStaff,
   seedOpenSeasonWithClass,
   type SeededClass,
@@ -89,6 +91,16 @@ test.describe("enrollment", () => {
 
     await page.goto("/portal/enrollments");
     await expect(page.getByText("Requested")).toBeVisible();
+
+    // after() runs once the response is finished, so the row may still be in
+    // flight for a moment after the page renders.
+    const enrollmentId = await latestEnrollmentIdFor("Lucia");
+    await expect
+      .poll(async () => {
+        const rows = await deliveriesForEnrollment(enrollmentId);
+        return rows.map((row) => `${row.template}:${row.status}`);
+      })
+      .toEqual(["enrollment.requested:sent"]);
   });
 
   test("staff confirm the request", async ({ browser }) => {
@@ -104,6 +116,9 @@ test.describe("enrollment", () => {
 
     await staff.getByRole("button", { name: "Confirm Lucia Vasquez" }).click();
     await expect(staff.getByText("No requests waiting.")).toBeVisible();
+
+    await staff.goto("/admin/emails");
+    await expect(staff.getByText("Everything has been delivered.")).toBeVisible();
     await staffContext.close();
 
     const parentContext = await browser.newContext();
@@ -111,6 +126,14 @@ test.describe("enrollment", () => {
     await signIn(parent, parentEmail);
     await parent.goto("/portal/enrollments");
     await expect(parent.getByText("Enrolled")).toBeVisible();
+
+    const enrollmentId = await latestEnrollmentIdFor("Lucia");
+    await expect
+      .poll(async () => {
+        const rows = await deliveriesForEnrollment(enrollmentId);
+        return rows.map((row) => `${row.template}:${row.status}`);
+      })
+      .toEqual(["enrollment.requested:sent", "enrollment.confirmed:sent"]);
     await parentContext.close();
   });
 

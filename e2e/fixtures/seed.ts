@@ -1,11 +1,18 @@
-import { eq, like } from "drizzle-orm";
+import { asc, desc, eq, like } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import { syncOccurrencesForOffering } from "@/db/queries/class-occurrences";
 import { createOffering } from "@/db/queries/class-offerings";
 import { createSeason } from "@/db/queries/seasons";
 import * as schema from "@/db/schema";
-import { classOfferings, seasons, user } from "@/db/schema";
+import {
+  classOfferings,
+  emailDeliveries,
+  enrollments,
+  seasons,
+  students,
+  user,
+} from "@/db/schema";
 
 /**
  * Creates a published class in the test database and returns its name.
@@ -140,4 +147,34 @@ export async function promoteToStaff(email: string): Promise<void> {
   await withDb((db) =>
     db.update(user).set({ role: "staff" }).where(eq(user.email, email)),
   );
+}
+
+/**
+ * Every delivery row belonging to one enrollment, newest last. Read directly
+ * because the e2e suite has no other window onto what was sent — the capture
+ * transport deliberately keeps nothing in memory.
+ */
+export async function deliveriesForEnrollment(enrollmentId: string) {
+  return withDb((db) =>
+    db
+      .select()
+      .from(emailDeliveries)
+      .where(eq(emailDeliveries.sourceId, enrollmentId))
+      .orderBy(asc(emailDeliveries.createdAt)),
+  );
+}
+
+/** The most recent enrollment id for a student, by first name. */
+export async function latestEnrollmentIdFor(firstName: string): Promise<string> {
+  return withDb(async (db) => {
+    const [row] = await db
+      .select({ id: enrollments.id })
+      .from(enrollments)
+      .innerJoin(students, eq(enrollments.studentId, students.id))
+      .where(eq(students.firstName, firstName))
+      .orderBy(desc(enrollments.requestedAt))
+      .limit(1);
+    if (!row) throw new Error(`no enrollment found for ${firstName}`);
+    return row.id;
+  });
 }
