@@ -6,3 +6,4 @@ export * from "./class-occurrences";
 export * from "./auth";
 export * from "./enrollments";
 export * from "./audit-log";
+export * from "./email-deliveries";

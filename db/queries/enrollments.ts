@@ -11,6 +11,7 @@ import {
 } from "@/db/schema";
 import { todayIso } from "@/lib/dates";
 import { recordAudit } from "./audit-log";
+import { queueEnrollmentEmails } from "./email-deliveries";
 import type { Database, Transaction } from "./executor";
 
 export type RequestInput = {
@@ -20,7 +21,7 @@ export type RequestInput = {
 };
 
 export type RequestResult =
-  | { ok: true; enrollment: Enrollment }
+  | { ok: true; enrollment: Enrollment; deliveryIds: string[] }
   | { ok: false; reason: "not-found" | "closed" | "full" | "duplicate" };
 
 /**
@@ -126,7 +127,12 @@ export async function requestEnrollment(
         after: { status: enrollment.status, classOfferingId: input.offeringId },
       });
 
-      return { ok: true, enrollment } as const;
+      const deliveryIds = await queueEnrollmentEmails(tx, {
+        enrollmentId: enrollment.id,
+        template: "enrollment.requested",
+      });
+
+      return { ok: true, enrollment, deliveryIds } as const;
     });
   } catch (error) {
     if (isUniqueViolation(error)) return { ok: false, reason: "duplicate" };
@@ -140,7 +146,7 @@ export type TransitionInput = {
 };
 
 export type TransitionResult =
-  | { ok: true; enrollment: Enrollment }
+  | { ok: true; enrollment: Enrollment; deliveryIds: string[] }
   | { ok: false; reason: "not-found" | "not-pending" };
 
 /**
@@ -184,7 +190,12 @@ export async function confirmEnrollment(
       after: { status: row.status },
     });
 
-    return { ok: true, enrollment: row } as const;
+    const deliveryIds = await queueEnrollmentEmails(tx, {
+      enrollmentId: row.id,
+      template: "enrollment.confirmed",
+    });
+
+    return { ok: true, enrollment: row, deliveryIds } as const;
   });
 }
 
@@ -242,7 +253,12 @@ export async function releaseEnrollment(
       after: { status: row.status },
     });
 
-    return { ok: true, enrollment: row } as const;
+    const deliveryIds = await queueEnrollmentEmails(tx, {
+      enrollmentId: row.id,
+      template: "enrollment.released",
+    });
+
+    return { ok: true, enrollment: row, deliveryIds } as const;
   });
 }
 
@@ -299,7 +315,9 @@ export async function withdrawEnrollment(
       after: { status: row.status },
     });
 
-    return { ok: true, enrollment: row } as const;
+    // No email is queued: a family that gave up its own seat, by its own
+    // action, does not need to be told that it did.
+    return { ok: true, enrollment: row, deliveryIds: [] } as const;
   });
 }
 

@@ -23,6 +23,7 @@ export default defineConfig({
       DATABASE_URL: process.env.TEST_DATABASE_URL!,
       BETTER_AUTH_URL: "http://localhost:3100",
       E2E_SKIP_EMAIL_VERIFICATION: "true",
+      EMAIL_TRANSPORT: "capture",
     },
   },
 });

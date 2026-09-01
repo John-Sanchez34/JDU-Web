@@ -36,6 +36,13 @@
       "when": 1787177013291,
       "tag": "0004_supreme_mentallo",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1787973161526,
+      "tag": "0005_shocking_secret_warriors",
+      "breakpoints": true
     }
   ]
 }

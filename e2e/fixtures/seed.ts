@@ -1,11 +1,18 @@
-import { eq, like } from "drizzle-orm";
+import { asc, desc, eq, like } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import { syncOccurrencesForOffering } from "@/db/queries/class-occurrences";
 import { createOffering } from "@/db/queries/class-offerings";
 import { createSeason } from "@/db/queries/seasons";
 import * as schema from "@/db/schema";
-import { classOfferings, seasons, user } from "@/db/schema";
+import {
+  classOfferings,
+  emailDeliveries,
+  enrollments,
+  seasons,
+  students,
+  user,
+} from "@/db/schema";
 
 /**
  * Creates a published class in the test database and returns its name.
@@ -95,6 +102,16 @@ export async function seedOpenSeasonWithClass(
       // Same reason as `seedSeasonWithClass`: seasons from earlier runs share
       // a start date, and `getCurrentSeason` would break the tie arbitrarily.
       await db.delete(seasons).where(like(seasons.name, "E2E %"));
+
+      // The retry page's empty state ("Everything has been delivered.") is
+      // an assertion about the whole table, not just this run's rows — so a
+      // failed or stuck-sending row left behind by an earlier run of any
+      // suite (e2e or integration, since both point at TEST_DATABASE_URL)
+      // would fail it. Clear it here, in the same branch that clears
+      // seasons, so a second call that adds a class to an existing season
+      // does not wipe deliveries mid-scenario.
+      await db.delete(emailDeliveries);
+
       const season = await createSeason(db, {
         name: `E2E ${year}`,
         startDate: `${year}-01-01`,
@@ -140,4 +157,39 @@ export async function promoteToStaff(email: string): Promise<void> {
   await withDb((db) =>
     db.update(user).set({ role: "staff" }).where(eq(user.email, email)),
   );
+}
+
+/**
+ * Every delivery row belonging to one enrollment, newest last. Read directly
+ * because the e2e suite has no other window onto what was sent — the capture
+ * transport deliberately keeps nothing in memory.
+ *
+ * `id` is a tiebreaker, not decoration: a two-parent family's rows are
+ * written by one statement and share the transaction's timestamp, so
+ * `createdAt` alone leaves their order unstable — the same reasoning as
+ * `listRetriableDeliveries`.
+ */
+export async function deliveriesForEnrollment(enrollmentId: string) {
+  return withDb((db) =>
+    db
+      .select()
+      .from(emailDeliveries)
+      .where(eq(emailDeliveries.sourceId, enrollmentId))
+      .orderBy(asc(emailDeliveries.createdAt), asc(emailDeliveries.id)),
+  );
+}
+
+/** The most recent enrollment id for a student, by first name. */
+export async function latestEnrollmentIdFor(firstName: string): Promise<string> {
+  return withDb(async (db) => {
+    const [row] = await db
+      .select({ id: enrollments.id })
+      .from(enrollments)
+      .innerJoin(students, eq(enrollments.studentId, students.id))
+      .where(eq(students.firstName, firstName))
+      .orderBy(desc(enrollments.requestedAt))
+      .limit(1);
+    if (!row) throw new Error(`no enrollment found for ${firstName}`);
+    return row.id;
+  });
 }

@@ -1,7 +1,10 @@
 "use server";
 
+import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { db } from "@/db";
+import { getDelivery } from "@/db/queries/email-deliveries";
+import { deliverQueued } from "@/lib/notifications/deliver";
 import { recordAudit } from "@/db/queries/audit-log";
 import { syncOccurrencesForOffering } from "@/db/queries/class-occurrences";
 import {
@@ -17,7 +20,10 @@ import {
 import { createSeason } from "@/db/queries/seasons";
 import type { ActionState } from "@/lib/action-state";
 import { offeringInputSchema, seasonInputSchema } from "@/lib/admin-validation";
-import { enrollmentIdSchema } from "@/lib/enrollment-validation";
+import {
+  deliveryIdSchema,
+  enrollmentIdSchema,
+} from "@/lib/enrollment-validation";
 import { requireStaff } from "@/lib/guards";
 
 /*
@@ -124,6 +130,8 @@ export async function confirmEnrollmentAction(
   });
   if (!result.ok) return { error: transitionError(result.reason) };
 
+  after(() => deliverQueued(db, result.deliveryIds));
+
   // Confirming does not move `seats_taken` — the pending request already held
   // the seat — so only the queue itself goes stale here.
   revalidatePath("/admin/enrollments");
@@ -145,6 +153,8 @@ export async function releaseEnrollmentAction(
     actorUserId: staff.id,
   });
   if (!result.ok) return { error: transitionError(result.reason) };
+
+  after(() => deliverQueued(db, result.deliveryIds));
 
   // Releasing gives the seat back, so the public catalog's remaining-seat
   // count is stale until it is revalidated too.
@@ -219,5 +229,35 @@ export async function updateOfferingAction(
   revalidatePath(`/admin/classes/${offeringId}`);
   revalidatePath("/classes");
   revalidatePath("/schedule");
+  return { error: null };
+}
+
+export async function retryDeliveryAction(
+  _prevState: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  await requireStaff();
+  const parsed = deliveryIdSchema.safeParse(toObject(formData));
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Please check the form." };
+  }
+
+  /*
+   * Awaited, not deferred: a person pressed Retry and is waiting to see
+   * whether it worked. `deliverQueued` never throws, and a row that someone
+   * else already sent is skipped by the claim.
+   */
+  const outcomes = await deliverQueued(db, [parsed.data.deliveryId]);
+
+  revalidatePath("/admin/emails");
+
+  // "skipped" is not a failure — the row was already sent or is in flight
+  // elsewhere — so only "failed" gets an error surfaced. The revalidated list
+  // speaks for itself otherwise.
+  if (outcomes[parsed.data.deliveryId] === "failed") {
+    const delivery = await getDelivery(db, parsed.data.deliveryId);
+    return { error: delivery?.error ?? "That message could not be sent." };
+  }
+
   return { error: null };
 }
