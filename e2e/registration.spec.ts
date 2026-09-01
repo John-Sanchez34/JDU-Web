@@ -75,6 +75,12 @@ test.describe("family registration", () => {
     await page.getByLabel("Password").fill("correct-horse-battery");
     await page.getByRole("button", { name: "Sign in" }).click();
 
+    // Sign-in is async for the same reason, and the session cookie is not set
+    // until it lands. Racing straight to /admin would abort the in-flight
+    // /portal render mid-stream, and — worse — could reach /admin before the
+    // cookie exists, bouncing to /sign-in and failing for the wrong reason.
+    await expect(page).toHaveURL(/\/portal$/);
+
     await page.goto("/admin");
     await expect(page.getByRole("heading", { name: "Not allowed" })).toBeVisible();
   });
