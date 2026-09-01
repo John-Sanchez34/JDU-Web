@@ -42,6 +42,13 @@ function costLines(data: EnrollmentEmailData): string[] {
   return lines;
 }
 
+/*
+ * `data.className` is staff-supplied and lands in `subject` below. It reaches
+ * Resend as a JSON string value over HTTPS, never as a raw SMTP header, so a
+ * CR/LF in a class name cannot inject a header here — no sanitisation needed
+ * *by this transport*. That is a property of the transport, not of the data:
+ * a future SMTP transport would have to add that sanitisation itself.
+ */
 function body(
   template: EnrollmentEmailTemplate,
   data: EnrollmentEmailData,

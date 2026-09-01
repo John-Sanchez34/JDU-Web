@@ -46,8 +46,9 @@ describe("deliverQueued", () => {
       .values({ ...base, status: "sent", providerMessageId: "original" })
       .returning();
 
-    await deliverQueued(db, [row!.id]);
+    const outcomes = await deliverQueued(db, [row!.id]);
 
+    expect(outcomes[row!.id]).toBe("skipped");
     const [after] = await db
       .select()
       .from(emailDeliveries)
@@ -57,12 +58,35 @@ describe("deliverQueued", () => {
   });
 
   it("ignores an id that does not exist", async () => {
-    await expect(
-      deliverQueued(db, ["11111111-1111-1111-1111-111111111111"]),
-    ).resolves.toBeUndefined();
+    const outcomes = await deliverQueued(db, ["11111111-1111-1111-1111-111111111111"]);
+    expect(outcomes["11111111-1111-1111-1111-111111111111"]).toBe("skipped");
   });
 
   it("does nothing at all for an empty list", async () => {
-    await expect(deliverQueued(db, [])).resolves.toBeUndefined();
+    await expect(deliverQueued(db, [])).resolves.toEqual({});
+  });
+
+  it("recovers a row stuck sending past the window — proof Retry does something", async () => {
+    // End-to-end proof for findings 1 and 2: a row abandoned mid-send (the
+    // exact state Retry exists to rescue) reaches `sent` when run back through
+    // deliverQueued, using claimForSend's real (non-injected) clock. Before
+    // the fix this row would stay `sending` forever: claimForSend would
+    // refuse it, deliverQueued would report "skipped", and Retry would be a
+    // permanent no-op.
+    const staleUpdatedAt = new Date(Date.now() - 20 * 60 * 1000); // 20m > STUCK_AFTER_MS
+    const [row] = await db
+      .insert(emailDeliveries)
+      .values({ ...base, status: "sending", attempts: 1, updatedAt: staleUpdatedAt })
+      .returning();
+
+    const outcomes = await deliverQueued(db, [row!.id]);
+
+    expect(outcomes[row!.id]).toBe("sent");
+    const [after] = await db
+      .select()
+      .from(emailDeliveries)
+      .where(eq(emailDeliveries.id, row!.id));
+    expect(after!.status).toBe("sent");
+    expect(after!.attempts).toBe(2);
   });
 });

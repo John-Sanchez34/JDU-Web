@@ -35,6 +35,15 @@ function capturing(): boolean {
  */
 export async function sendEmail(message: EmailMessage): Promise<SendResult> {
   if (capturing()) {
+    // A leaked EMAIL_TRANSPORT=capture in production is the one failure mode
+    // the delivery table cannot detect on its own: the row still reads `sent`
+    // with a plausible-looking id, and /admin/emails stays empty because
+    // nothing ever failed. Refuse outright rather than silently discard mail.
+    if (process.env.NODE_ENV === "production") {
+      throw new Error(
+        "EMAIL_TRANSPORT=capture is set in a production environment — refusing to discard mail silently.",
+      );
+    }
     // Deliberately not stored anywhere: the tests that care assert against the
     // delivery row, and holding messages in memory would leak across a run.
     return { providerMessageId: `capture-${crypto.randomUUID()}` };

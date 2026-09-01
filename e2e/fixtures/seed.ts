@@ -163,6 +163,11 @@ export async function promoteToStaff(email: string): Promise<void> {
  * Every delivery row belonging to one enrollment, newest last. Read directly
  * because the e2e suite has no other window onto what was sent — the capture
  * transport deliberately keeps nothing in memory.
+ *
+ * `id` is a tiebreaker, not decoration: a two-parent family's rows are
+ * written by one statement and share the transaction's timestamp, so
+ * `createdAt` alone leaves their order unstable — the same reasoning as
+ * `listRetriableDeliveries`.
  */
 export async function deliveriesForEnrollment(enrollmentId: string) {
   return withDb((db) =>
@@ -170,7 +175,7 @@ export async function deliveriesForEnrollment(enrollmentId: string) {
       .select()
       .from(emailDeliveries)
       .where(eq(emailDeliveries.sourceId, enrollmentId))
-      .orderBy(asc(emailDeliveries.createdAt)),
+      .orderBy(asc(emailDeliveries.createdAt), asc(emailDeliveries.id)),
   );
 }
 

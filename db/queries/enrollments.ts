@@ -315,6 +315,8 @@ export async function withdrawEnrollment(
       after: { status: row.status },
     });
 
+    // No email is queued: a family that gave up its own seat, by its own
+    // action, does not need to be told that it did.
     return { ok: true, enrollment: row, deliveryIds: [] } as const;
   });
 }

@@ -81,12 +81,19 @@ export async function queueEnrollmentEmails(
 }
 
 /**
- * How long a row may sit in `sending` before it is assumed abandoned.
+ * How long a row may sit in `sending` — or, unclaimed, in `queued` — before it
+ * is assumed abandoned.
  *
- * Nothing sweeps on a timer, so without this a process that died mid-send
- * would strand a row in a state nothing ever looks at again.
+ * Nothing sweeps on a timer, so without this a process that died mid-send, or
+ * one that never reached `after()` at all, would strand a row in a state
+ * nothing ever looks at again.
  */
 export const STUCK_AFTER_MS = 15 * 60 * 1000;
+
+/** The instant before which a row is considered abandoned rather than merely in flight. */
+function cutoffFor(now: Date): Date {
+  return new Date(now.getTime() - STUCK_AFTER_MS);
+}
 
 /**
  * Takes exclusive responsibility for sending one delivery.
@@ -95,25 +102,50 @@ export const STUCK_AFTER_MS = 15 * 60 * 1000;
  * is the decision, never a read followed by a write that another process could
  * interleave with — the same discipline as the seat claim in `enrollments.ts`.
  * Null means someone else holds it, or it has already been sent.
+ *
+ * Accepts everything `listRetriableDeliveries` can show a staff member — plus
+ * fresh `queued` rows, which is the normal path `after()` uses and never
+ * appears on the list. A `sending` row with a recent `updatedAt` stays
+ * unclaimable, which is exactly what preserves exactly-once: only a row
+ * abandoned long enough to cross `cutoff` opens back up.
  */
 export async function claimForSend(
   db: Database,
   deliveryId: string,
+  now: Date = new Date(),
 ): Promise<EmailDelivery | null> {
+  const cutoff = cutoffFor(now);
+
   const [row] = await db
     .update(emailDeliveries)
     .set({
       status: "sending",
       attempts: sql`${emailDeliveries.attempts} + 1`,
-      updatedAt: new Date(),
+      updatedAt: now,
     })
     .where(
       and(
         eq(emailDeliveries.id, deliveryId),
-        inArray(emailDeliveries.status, ["queued", "failed"]),
+        or(
+          inArray(emailDeliveries.status, ["queued", "failed"]),
+          and(eq(emailDeliveries.status, "sending"), lt(emailDeliveries.updatedAt, cutoff)),
+        ),
       ),
     )
     .returning();
+  return row ?? null;
+}
+
+/** One delivery row by id, for surfacing its recorded error after a retry. */
+export async function getDelivery(
+  db: Database,
+  deliveryId: string,
+): Promise<EmailDelivery | null> {
+  const [row] = await db
+    .select()
+    .from(emailDeliveries)
+    .where(eq(emailDeliveries.id, deliveryId))
+    .limit(1);
   return row ?? null;
 }
 
@@ -149,8 +181,17 @@ export async function markFailed(
 }
 
 /**
- * Everything a staff member should look at: outright failures, plus rows still
- * `sending` long enough that the process handling them is gone.
+ * Everything a staff member should look at: outright failures, rows still
+ * `sending` long enough that the process handling them is gone, and rows
+ * still `queued` long enough that `after()` never ran at all — a deploy, a
+ * SIGTERM, or the route's max duration expiring between the commit and the
+ * callback.
+ *
+ * A *fresh* `queued` row is deliberately excluded: `after()` is about to take
+ * it, and listing it here would just be noise on every page load. Only a
+ * `queued` row older than `cutoff` — meaning nobody ever picked it up — earns
+ * a spot. Do not "simplify" this to match every other queued row; that would
+ * put the normal case on the page.
  *
  * `now` is a parameter so the boundary is testable without waiting fifteen
  * minutes.
@@ -159,7 +200,7 @@ export async function listRetriableDeliveries(
   db: Database,
   now: Date = new Date(),
 ): Promise<EmailDelivery[]> {
-  const cutoff = new Date(now.getTime() - STUCK_AFTER_MS);
+  const cutoff = cutoffFor(now);
 
   return db
     .select()
@@ -170,6 +211,10 @@ export async function listRetriableDeliveries(
         and(
           eq(emailDeliveries.status, "sending"),
           lt(emailDeliveries.updatedAt, cutoff),
+        ),
+        and(
+          eq(emailDeliveries.status, "queued"),
+          lt(emailDeliveries.createdAt, cutoff),
         ),
       ),
     )
