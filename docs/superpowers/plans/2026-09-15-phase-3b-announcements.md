@@ -2611,7 +2611,11 @@ export const announcementInputSchema = z
   })
   .transform((input) => ({
     ...input,
-    classOfferingId: input.audienceType === "class_offering" ? input.classOfferingId! : null,
+    // `?? null`, not `!`: a missing field parses as `undefined`, and the
+    // refine below checks `!== null` — leaving it `undefined` would let a
+    // class-audience row with no class straight through.
+    classOfferingId:
+      input.audienceType === "class_offering" ? (input.classOfferingId ?? null) : null,
   }))
   .refine((input) => input.audienceType === "all" || input.classOfferingId !== null, {
     message: "Choose which class this is for.",
