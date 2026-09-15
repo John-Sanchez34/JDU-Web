@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { sendEmail } from "@/lib/email";
+import { EmailSendError, sendEmail } from "@/lib/email";
 
 describe("sendEmail with the capture transport", () => {
   const original = process.env.EMAIL_TRANSPORT;
@@ -46,5 +46,23 @@ describe("sendEmail with the capture transport", () => {
         }),
       ).rejects.toThrow(/EMAIL_TRANSPORT/);
     });
+  });
+});
+
+describe("EmailSendError", () => {
+  it("recognises a 429 as a rate limit", () => {
+    expect(new EmailSendError("slow down", 429, null).isRateLimited).toBe(true);
+  });
+
+  it("recognises the provider's named rate-limit error without a status", () => {
+    expect(
+      new EmailSendError("slow down", null, "rate_limit_exceeded").isRateLimited,
+    ).toBe(true);
+  });
+
+  it("treats a rejected address as an ordinary failure", () => {
+    expect(new EmailSendError("invalid recipient", 422, "validation_error").isRateLimited).toBe(
+      false,
+    );
   });
 });
