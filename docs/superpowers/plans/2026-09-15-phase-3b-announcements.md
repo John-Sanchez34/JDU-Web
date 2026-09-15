@@ -2187,11 +2187,17 @@ Then in `sendEmail`, pass the headers through and throw the typed error:
 
   if (error) {
     console.error("sendEmail failed", { to: message.to, error });
-    const status = (error as { statusCode?: number }).statusCode ?? null;
+    /*
+     * No cast and no fallbacks: Resend 6.20 types its `ErrorResponse` as
+     * `{ message: string; statusCode: number | null; name: RESEND_ERROR_CODE_KEY }`,
+     * and `rate_limit_exceeded` is one of that union's members — so the
+     * rate-limit test below is reading a documented value, not guessing at an
+     * undocumented shape. Verified in `node_modules/resend/dist/index.d.mts`.
+     */
     throw new EmailSendError(
       `Failed to send email: ${error.message}`,
-      status,
-      error.name ?? null,
+      error.statusCode,
+      error.name,
     );
   }
 ```
