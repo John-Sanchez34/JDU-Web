@@ -1417,10 +1417,49 @@ export async function countDeliveriesByStatus(
 }
 ```
 
+- [ ] **Step 3a: Make `queueEnrollmentEmails` use it**
+
+`queueEnrollmentEmails` ends by building delivery rows in a `.map` and
+inserting them — which is now exactly what `queueDeliveries` does, with a
+render that ignores its argument. Generalising the queueing and then leaving
+the case it was generalised from on its own copy is the worst of both choices,
+so replace that tail. The select of `details` and of `recipients` above it
+stays as it is; only the insert goes.
+
+Replace the final `const rows = await exec.insert(emailDeliveries)…` block and
+its `return` with:
+
+```ts
+  return queueDeliveries(exec, {
+    sourceType: "enrollment",
+    sourceId: input.enrollmentId,
+    template: input.template,
+    category: "transactional",
+    // The recipient select yields `{ id, email }`; `Recipient` is
+    // `{ userId, email }`.
+    recipients: recipients.map((recipient) => ({
+      userId: recipient.id,
+      email: recipient.email,
+    })),
+    // Every parent on the family gets the same transactional message — unlike
+    // broadcast, where the body carries a per-recipient unsubscribe link.
+    render: () => rendered,
+  });
+```
+
+The early `if (recipients.length === 0) return [];` guard above can stay or go;
+`queueDeliveries` makes the same check. Keeping it is fine — it avoids a
+pointless render.
+
+`tests/integration/email-queueing.test.ts` and
+`tests/integration/enrollment-email-wiring.test.ts` both cover this function and
+must stay green. If the refactor disturbs either, stop and report it rather
+than adjusting those tests — they are Phase 3a's contract, not yours.
+
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `npx vitest run tests/integration/queue-deliveries.test.ts`
-Expected: 5 passed.
+Run: `npx vitest run tests/integration/queue-deliveries.test.ts tests/integration/email-queueing.test.ts tests/integration/enrollment-email-wiring.test.ts`
+Expected: the 5 new tests pass, and both 3a suites still pass unchanged.
 
 - [ ] **Step 5: Run the full suite and commit**
 
@@ -3841,7 +3880,6 @@ async function occurrenceEmailData(exec: Transaction, occurrenceId: string) {
   const [row] = await exec
     .select({
       className: classOfferings.name,
-      dayOfWeek: classOfferings.dayOfWeek,
       startTime: classOfferings.startTime,
       endTime: classOfferings.endTime,
       date: classOccurrences.date,
@@ -4013,6 +4051,48 @@ export async function restoreOccurrence(
 
 > `Transaction` comes from `./executor`; add it to that file's type import if it
 > is not already there.
+
+- [ ] **Step 3a: Clear the dead `dayOfWeek` field and close two test gaps**
+
+Task 3's review found that `ClassOccurrenceEmailData.dayOfWeek` is declared and
+never read — `formatIsoDate` already yields the weekday, so `whenLine` gets
+"Monday, 12 October 2026" without it. This task is its only consumer, so retire
+it here rather than letting a later reader assume it matters:
+
+- In `lib/emails/class-occurrence.ts`, delete the `dayOfWeek: DayOfWeek;` field
+  from `ClassOccurrenceEmailData`, and delete the now-unused
+  `import type { DayOfWeek } from "@/db/schema";`.
+- In `tests/unit/broadcast-emails.test.ts`, delete `dayOfWeek` from the
+  `occurrence` fixture.
+- `occurrenceEmailData` above already does not select it.
+
+Then add the two assertions that review also asked for, to
+`tests/unit/broadcast-emails.test.ts`:
+
+```ts
+  it("escapes a staff-written reason on its way into the HTML part", () => {
+    const rendered = renderClassOccurrenceEmail("class.cancelled", {
+      ...occurrence,
+      reason: "Burst pipe <script>alert(1)</script> in Studio B & the hall.",
+    });
+
+    expect(rendered.html).not.toContain("<script>");
+    expect(rendered.html).toContain("&lt;script&gt;");
+    expect(rendered.html).toContain("&amp; the hall.");
+  });
+
+  it("mentions no money in the HTML part either", () => {
+    for (const template of ["class.cancelled", "class.restored"] as const) {
+      const rendered = renderClassOccurrenceEmail(template, occurrence);
+      for (const word of ["$", "refund", "credit", "make-up", "makeup"]) {
+        expect(rendered.html.toLowerCase()).not.toContain(word);
+      }
+    }
+  });
+```
+
+The `reason` field is staff-authored free text that lands in markup, so it
+deserves the same injection test the announcement body already has.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
