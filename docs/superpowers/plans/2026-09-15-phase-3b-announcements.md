@@ -3040,7 +3040,7 @@ import { audienceSeasonId, resolveAnnouncementAudience } from "@/db/queries/audi
 import { listPublishedOfferings } from "@/db/queries/class-offerings";
 import { countDeliveriesByStatus } from "@/db/queries/email-deliveries";
 import { getSeason } from "@/db/queries/seasons";
-import { todayIso } from "@/lib/dates";
+import { formatIsoDate, todayIso } from "@/lib/dates";
 import { requireStaff } from "@/lib/guards";
 
 export default async function AnnouncementPage({
@@ -3099,7 +3099,8 @@ export default async function AnnouncementPage({
 
       {announcement.emailedAt && (
         <p className="hint mt-6">
-          Emailed on {announcement.emailedAt.toLocaleDateString("en-GB")}. Editing
+          Emailed on{" "}
+          {formatIsoDate(announcement.emailedAt.toISOString().slice(0, 10))}. Editing
           the text below changes the site, not the messages families already
           received — those said what they said.
         </p>
