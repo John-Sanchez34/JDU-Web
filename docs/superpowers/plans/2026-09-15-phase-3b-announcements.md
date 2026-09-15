@@ -2895,14 +2895,23 @@ export function AnnouncementSendPanel({
   announcementId,
   status,
   emailed,
-  remaining,
+  /*
+   * `queued` and `sending` are separate because only `queued` is resumable.
+   * "Send the rest" runs `listQueuedForSource`, which deliberately returns
+   * queued rows only — a row stuck in `sending` is recovered from
+   * /admin/emails instead, once it is old enough to count as abandoned. Gating
+   * the button on queued+sending would show a button that does nothing.
+   */
+  queued,
+  sending,
   recipientCount,
   seasonName,
 }: {
   announcementId: string;
   status: "draft" | "published";
   emailed: boolean;
-  remaining: number;
+  queued: number;
+  sending: number;
   recipientCount: number;
   seasonName: string | null;
 }) {
@@ -2952,14 +2961,17 @@ export function AnnouncementSendPanel({
     );
   }
 
+  const waiting = queued + sending;
+
   return (
     <div className="panel mt-8 p-5">
       <p className="text-mirror">
-        {remaining === 0
+        {waiting === 0
           ? "Every message has gone out."
-          : `${remaining} ${remaining === 1 ? "message is" : "messages are"} still waiting.`}
+          : `${waiting} ${waiting === 1 ? "message is" : "messages are"} still waiting.`}
       </p>
-      {remaining > 0 && (
+
+      {queued > 0 && (
         <div className="mt-4">
           <OneButton
             action={sendRemainingAction}
@@ -2968,6 +2980,15 @@ export function AnnouncementSendPanel({
             pendingLabel="Sending…"
           />
         </div>
+      )}
+
+      {queued === 0 && sending > 0 && (
+        <p className="hint mt-3">
+          {sending === 1 ? "That one is" : "Those are"} mid-send. If{" "}
+          {sending === 1 ? "it is" : "they are"} still here in fifteen minutes,{" "}
+          {sending === 1 ? "it" : "they"} will appear on the Email page to be
+          retried — there is nothing to press here.
+        </p>
       )}
     </div>
   );
@@ -3111,7 +3132,8 @@ export default async function AnnouncementPage({
         announcementId={announcement.id}
         status={announcement.status}
         emailed={announcement.emailedAt !== null}
-        remaining={counts ? counts.queued + counts.sending : 0}
+        queued={counts?.queued ?? 0}
+        sending={counts?.sending ?? 0}
         recipientCount={recipients.length}
         seasonName={season?.name ?? null}
       />
