@@ -199,19 +199,26 @@ first time a process dies between the two writes.
 The token is an HMAC of the user id under `BETTER_AUTH_SECRET`, compared in
 constant time. No table, nothing to expire, nothing to clean up.
 
-`/unsubscribe?u=<token>` renders a confirmation page on GET and **opts out only
-on POST**. This matters more than it looks: corporate mail scanners and link
-prefetchers follow every GET in a message, so a GET that unsubscribes will
-quietly unsubscribe people who never clicked anything.
+The link in the footer is `/unsubscribe?u=<token>`, a page that explains what
+is about to happen and carries a button. The opt-out itself happens **only on
+POST**, to `/api/unsubscribe?u=<token>`. This matters more than it looks:
+corporate mail scanners and link prefetchers follow every GET in a message, so a
+GET that unsubscribes will quietly unsubscribe people who never clicked
+anything.
 
-The same route handler serves RFC 8058 one-click unsubscribe. Broadcast mail —
-and only broadcast mail — carries `List-Unsubscribe` and `List-Unsubscribe-Post`
-headers pointing at it, so Gmail and Apple Mail show their own unsubscribe
-button. That native button is the single most effective thing available for
-keeping studio mail out of spam folders. It is a route handler rather than a
-server action precisely because it must accept an unauthenticated POST from a
-mailbox provider; the HMAC is the authentication. `lib/email.ts` gains a
-`headers` passthrough.
+They are two routes rather than one because Next forbids a `route.ts` and a
+`page.tsx` at the same segment. The split is not a workaround, though — it is
+the shape RFC 8058 wants anyway. `/api/unsubscribe` is also the one-click
+endpoint: broadcast mail, and only broadcast mail, carries `List-Unsubscribe`
+and `List-Unsubscribe-Post: List-Unsubscribe=One-Click` headers pointing at it,
+so Gmail and Apple Mail show their own unsubscribe button. That native button is
+the single most effective thing available for keeping studio mail out of spam
+folders.
+
+It is a route handler rather than a server action precisely because it must
+accept an unauthenticated cross-origin POST from a mailbox provider; the HMAC in
+the query string is the authentication, and the endpoint reveals nothing about
+whether the token matched anyone. `lib/email.ts` gains a `headers` passthrough.
 
 Opting back in is a toggle at `/portal/preferences`. Both directions are
 idempotent.
