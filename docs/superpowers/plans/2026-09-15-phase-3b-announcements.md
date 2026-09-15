@@ -3314,7 +3314,7 @@ git commit -m "feat: add the admin announcement pages"
 - Create: `app/(public)/announcements/page.tsx`
 - Create: `app/portal/announcements/page.tsx`
 - Modify: `app/portal/layout.tsx`
-- Modify: `app/(public)/layout.tsx`
+- Modify: `components/site-header.tsx` (the public nav lives here, not in the public layout)
 
 **Interfaces:**
 - Consumes: `listPublicAnnouncements`, `listAnnouncementsForFamily` (Task 6); `toParagraphs` (Task 3).
