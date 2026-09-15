@@ -2750,7 +2750,7 @@ export function AnnouncementForm({
       </fieldset>
 
       <div>
-        <button type="submit" disabled={pending} className="btn disabled:opacity-50">
+        <button type="submit" disabled={pending} className="btn btn-solid disabled:opacity-50">
           {pending ? "Saving…" : submitLabel}
         </button>
       </div>
@@ -2804,7 +2804,7 @@ function OneButton({
   return (
     <form action={formAction}>
       <input type="hidden" name="announcementId" value={announcementId} />
-      <button type="submit" disabled={pending} className="btn disabled:opacity-50">
+      <button type="submit" disabled={pending} className="btn btn-solid disabled:opacity-50">
         {pending ? pendingLabel : label}
       </button>
       {state.error && (
@@ -2923,7 +2923,7 @@ export default async function AdminAnnouncementsPage() {
             separate, deliberate step.
           </p>
         </div>
-        <Link href="/admin/announcements/new" className="btn">
+        <Link href="/admin/announcements/new" className="btn btn-solid">
           New announcement
         </Link>
       </div>
@@ -3130,7 +3130,7 @@ export default async function AnnouncementsPage() {
   const announcements = await listPublicAnnouncements(db);
 
   return (
-    <section className="mx-auto max-w-3xl px-6 py-16">
+    <main className="mx-auto max-w-5xl px-6 py-20">
       <h1 className="display text-3xl uppercase text-chalk">Studio news</h1>
 
       {announcements.length === 0 ? (
@@ -3154,7 +3154,7 @@ export default async function AnnouncementsPage() {
           ))}
         </ul>
       )}
-    </section>
+    </main>
   );
 }
 ```
@@ -3465,7 +3465,7 @@ export default async function UnsubscribePage({
   const valid = u ? verifyUnsubscribeToken(u) !== null : false;
 
   return (
-    <section className="mx-auto max-w-lg px-6 py-24">
+    <main className="mx-auto max-w-lg px-6 py-24">
       <h1 className="display text-2xl uppercase text-chalk">Studio news</h1>
 
       {!valid ? (
@@ -3481,13 +3481,13 @@ export default async function UnsubscribePage({
             class being cancelled — those are not something we can stop.
           </p>
           <form method="post" action={`/api/unsubscribe?u=${encodeURIComponent(u!)}`} className="mt-8">
-            <button type="submit" className="btn">
+            <button type="submit" className="btn btn-solid">
               Unsubscribe from studio news
             </button>
           </form>
         </>
       )}
-    </section>
+    </main>
   );
 }
 ```
@@ -3517,7 +3517,7 @@ export function BroadcastPreferenceForm({ optedOut }: { optedOut: boolean }) {
           ? "You are not receiving studio news."
           : "You are receiving studio news."}
       </p>
-      <button type="submit" disabled={pending} className="btn mt-4 disabled:opacity-50">
+      <button type="submit" disabled={pending} className="btn btn-solid mt-4 disabled:opacity-50">
         {pending ? "Saving…" : optedOut ? "Start receiving studio news" : "Stop receiving studio news"}
       </button>
       {state.error && (
@@ -4357,7 +4357,9 @@ test.describe("announcements", () => {
     await page.getByLabel("First name").fill("Nina");
     await page.getByLabel("Last name").fill("News");
     await page.getByLabel("Date of birth").fill("2015-05-05");
-    await page.getByRole("button", { name: "Add student" }).click();
+    // "Save student" — the label app/portal/students/new/page.tsx passes to
+    // StudentForm. Not "Add student"; check the component before changing it.
+    await page.getByRole("button", { name: "Save student" }).click();
 
     await page.goto("/portal");
     const cell = page
