@@ -1,4 +1,3 @@
-import type { DayOfWeek } from "@/db/schema";
 import { formatIsoDate } from "@/lib/dates";
 import { formatTimeRange } from "@/lib/format";
 import { escapeHtml, wrapHtml, type RenderedEmail } from "./layout";
@@ -9,7 +8,6 @@ export type ClassOccurrenceEmailData = {
   className: string;
   /** The occurrence's calendar date, YYYY-MM-DD. */
   date: string;
-  dayOfWeek: DayOfWeek;
   startTime: string;
   endTime: string;
   /** Staff's reason for cancelling. Null on a restoration. */

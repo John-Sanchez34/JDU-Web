@@ -89,3 +89,16 @@ export const offeringInputSchema = z
     monthlyPriceCents: monthlyPrice,
     seasonFeeCents: seasonFee ?? 0,
   }));
+
+export const occurrenceIdSchema = z.object({
+  occurrenceId: z.uuid(),
+  offeringId: z.uuid(),
+});
+
+export const occurrenceCancelSchema = occurrenceIdSchema.extend({
+  reason: z
+    .string()
+    .trim()
+    .min(1, "Say why the class is cancelled — families will read this.")
+    .max(500),
+});

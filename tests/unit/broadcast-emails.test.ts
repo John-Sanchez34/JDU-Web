@@ -8,7 +8,6 @@ const UNSUB = "https://studio.example/unsubscribe?u=token";
 const occurrence = {
   className: "Ballet I",
   date: "2026-10-12",
-  dayOfWeek: "monday" as const,
   startTime: "16:00:00",
   endTime: "17:00:00",
   reason: "The instructor is unwell.",
@@ -95,6 +94,26 @@ describe("renderClassOccurrenceEmail", () => {
       const rendered = renderClassOccurrenceEmail(template, occurrence);
       for (const word of ["$", "refund", "credit", "make-up", "makeup"]) {
         expect(rendered.text.toLowerCase()).not.toContain(word);
+      }
+    }
+  });
+
+  it("escapes a staff-written reason on its way into the HTML part", () => {
+    const rendered = renderClassOccurrenceEmail("class.cancelled", {
+      ...occurrence,
+      reason: "Burst pipe <script>alert(1)</script> in Studio B & the hall.",
+    });
+
+    expect(rendered.html).not.toContain("<script>");
+    expect(rendered.html).toContain("&lt;script&gt;");
+    expect(rendered.html).toContain("&amp; the hall.");
+  });
+
+  it("mentions no money in the HTML part either", () => {
+    for (const template of ["class.cancelled", "class.restored"] as const) {
+      const rendered = renderClassOccurrenceEmail(template, occurrence);
+      for (const word of ["$", "refund", "credit", "make-up", "makeup"]) {
+        expect(rendered.html.toLowerCase()).not.toContain(word);
       }
     }
   });
