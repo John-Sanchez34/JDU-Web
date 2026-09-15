@@ -5,6 +5,7 @@ const links = [
   { href: "/portal", label: "Overview" },
   { href: "/portal/students", label: "Students" },
   { href: "/portal/enrollments", label: "Classes" },
+  { href: "/portal/announcements", label: "Announcements" },
   { href: "/", label: "Back to site" },
 ];
 
