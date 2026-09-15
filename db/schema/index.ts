@@ -7,3 +7,4 @@ export * from "./auth";
 export * from "./enrollments";
 export * from "./audit-log";
 export * from "./email-deliveries";
+export * from "./announcements";

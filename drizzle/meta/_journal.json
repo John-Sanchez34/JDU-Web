@@ -43,6 +43,13 @@
       "when": 1787973161526,
       "tag": "0005_shocking_secret_warriors",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1789508724100,
+      "tag": "0006_needy_whistler",
+      "breakpoints": true
     }
   ]
 }
