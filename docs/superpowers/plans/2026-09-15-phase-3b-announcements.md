@@ -4709,10 +4709,55 @@ test.describe("announcements", () => {
 
     await expect(staff.getByText("Cancelled — The instructor is unwell.")).toBeVisible();
 
+    /*
+     * The assertion this test is actually named for. The parent unsubscribed
+     * from studio news in the previous scenario, and a cancellation is
+     * transactional — it must reach them anyway. Checking only that the admin
+     * page says "Cancelled" would pass even if the roster were never told,
+     * which is the failure that matters here.
+     */
+    const occurrenceId = await cancelledOccurrenceIdFor(className);
+    await expect
+      .poll(async () => {
+        const rows = await deliveriesForSource("class_occurrence", occurrenceId);
+        return rows.map((row) => `${row.recipientEmail}:${row.template}:${row.status}`);
+      })
+      .toEqual([`${parentEmail}:class.cancelled:sent`]);
+
+    // And it carries no way to opt out of it.
+    const [delivery] = await deliveriesForSource("class_occurrence", occurrenceId);
+    expect(delivery!.category).toBe("transactional");
+    expect(delivery!.bodyText.toLowerCase()).not.toContain("unsubscribe");
+    expect(delivery!.bodyHtml.toLowerCase()).not.toContain("unsubscribe");
+
     await context.close();
   });
 });
 ```
+
+That needs one more seed helper. Append it to `e2e/fixtures/seed.ts`, beside
+the others:
+
+```ts
+/** The cancelled occurrence of a class, by the class's name. */
+export async function cancelledOccurrenceIdFor(className: string): Promise<string> {
+  return withDb(async (db) => {
+    const [row] = await db
+      .select({ id: classOccurrences.id })
+      .from(classOccurrences)
+      .innerJoin(classOfferings, eq(classOfferings.id, classOccurrences.classOfferingId))
+      .where(
+        and(eq(classOfferings.name, className), eq(classOccurrences.status, "cancelled")),
+      )
+      .orderBy(asc(classOccurrences.date))
+      .limit(1);
+    if (!row) throw new Error(`no cancelled occurrence found for ${className}`);
+    return row.id;
+  });
+}
+```
+
+with `classOccurrences` added to that file's existing `@/db/schema` import.
 
 - [ ] **Step 3: Run the e2e suite**
 
