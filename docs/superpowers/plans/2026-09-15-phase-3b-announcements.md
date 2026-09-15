@@ -945,8 +945,38 @@ describe("audience resolution", () => {
     const seeded = await seedTwoFamilies(db, 5);
     await addLogin("a1", "a1@example.com", seeded.familyA.id);
     await addLogin("b1", "b1@example.com", seeded.familyB.id);
+    /*
+     * Family B must hold a live seat of its own, in a DIFFERENT class.
+     * Without that, b1 would be absent from the result whether or not the
+     * class predicate did anything at all — the test would pass against a
+     * query that ignored `classOfferingId` entirely, which is exactly the
+     * bug it is supposed to catch.
+     */
+    const [other] = await db
+      .insert(classOfferings)
+      .values({
+        seasonId: seeded.offering.seasonId,
+        name: "Jazz I",
+        dayOfWeek: "wednesday",
+        startTime: "17:00:00",
+        endTime: "18:00:00",
+        capacity: 5,
+        monthlyPriceCents: 8500,
+        published: true,
+      })
+      .returning();
     await request(seeded.familyA.id, seeded.studentA.id, seeded.offering.id);
+    await request(seeded.familyB.id, seeded.studentB.id, other!.id);
 
+    // Both families are in the season, so "everyone" reaches both …
+    const everyone = await resolveAnnouncementAudience(
+      db,
+      { audienceType: "all", classOfferingId: null },
+      TODAY,
+    );
+    expect(everyone.map((r) => r.email)).toEqual(["a1@example.com", "b1@example.com"]);
+
+    // … and naming one class cuts it to that class's family.
     const recipients = await resolveAnnouncementAudience(
       db,
       { audienceType: "class_offering", classOfferingId: seeded.offering.id },
