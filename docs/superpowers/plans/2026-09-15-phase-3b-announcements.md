@@ -4758,8 +4758,19 @@ test.describe("announcements", () => {
     expect(link, "the broadcast body must carry an unsubscribe link").toBeTruthy();
 
     await page.goto(link!);
+    /*
+     * Visiting must not opt anybody out. Corporate mail scanners and link
+     * prefetchers follow every link in a message, so a GET that unsubscribes
+     * would quietly unsubscribe families who never clicked anything — and the
+     * studio would see its list shrink with no explanation. Check before
+     * pressing anything: without this line the scenario would pass just as
+     * happily against a page that opted the parent out on load.
+     */
+    expect(await isBroadcastOptedOut(parentEmail)).toBe(false);
+
     await page.getByRole("button", { name: "Unsubscribe from studio news" }).click();
     await expect(page.getByText(/unsubscribed from studio news/i)).toBeVisible();
+    expect(await isBroadcastOptedOut(parentEmail)).toBe(true);
 
     const context = await browser.newContext();
     const staff = await context.newPage();
@@ -4823,6 +4834,25 @@ That needs one more seed helper. Append it to `e2e/fixtures/seed.ts`, beside
 the others:
 
 ```ts
+/**
+ * Whether an account has opted out of broadcast mail.
+ *
+ * Read straight from the column rather than inferred from a later send, so the
+ * "a GET must not opt anyone out" assertion can be made at the exact moment
+ * between visiting the page and pressing its button.
+ */
+export async function isBroadcastOptedOut(email: string): Promise<boolean> {
+  return withDb(async (db) => {
+    const [row] = await db
+      .select({ optedOutAt: user.broadcastOptedOutAt })
+      .from(user)
+      .where(eq(user.email, email))
+      .limit(1);
+    if (!row) throw new Error(`no account found for ${email}`);
+    return row.optedOutAt !== null;
+  });
+}
+
 /** The cancelled occurrence of a class, by the class's name. */
 export async function cancelledOccurrenceIdFor(className: string): Promise<string> {
   return withDb(async (db) => {
