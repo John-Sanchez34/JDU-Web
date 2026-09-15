@@ -1517,7 +1517,7 @@ Create `tests/integration/announcements.test.ts`:
 
 ```ts
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
-import { eq } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 import { closeTestDb, getTestDb, resetDatabase, type TestDb } from "@/tests/setup/db";
 import { seedTwoFamilies } from "@/tests/setup/enrollment-fixtures";
 import {
@@ -1528,6 +1528,7 @@ import {
   sendAnnouncement,
 } from "@/db/queries/announcements";
 import { requestEnrollment } from "@/db/queries/enrollments";
+import { verifyUnsubscribeToken } from "@/lib/unsubscribe-token";
 import { announcements, auditLog, emailDeliveries, user } from "@/db/schema";
 
 const TODAY = "2026-10-01";
@@ -1644,6 +1645,47 @@ describe("announcements", () => {
       .from(announcements)
       .where(eq(announcements.id, announcement.id));
     expect(row!.emailedAt).not.toBeNull();
+  });
+
+  it("gives each parent on a family their own unsubscribe link", async () => {
+    const seeded = await seedEnrolledFamily();
+    await db.insert(user).values({
+      id: "a2",
+      name: "Two",
+      email: "a2@example.com",
+      familyId: seeded.familyA.id,
+    });
+    const announcement = await draft();
+    await publishAnnouncement(db, { announcementId: announcement.id, actorUserId: null });
+
+    const result = await sendAnnouncement(db, {
+      announcementId: announcement.id,
+      actorUserId: null,
+      today: TODAY,
+    });
+    expect(result.ok).toBe(true);
+
+    const rows = await db
+      .select()
+      .from(emailDeliveries)
+      .orderBy(asc(emailDeliveries.recipientEmail));
+    expect(rows.map((r) => r.recipientEmail)).toEqual([
+      "a1@example.com",
+      "a2@example.com",
+    ]);
+
+    const tokens = rows.map((r) => r.bodyText.match(/\/unsubscribe\?u=(\S+)/)?.[1]);
+    /*
+     * Two different tokens, each naming its own recipient. This is the
+     * composition that `queueDeliveries`' per-recipient render exists for: if
+     * `sendAnnouncement` ever passed a pre-rendered message instead of a
+     * callback, both parents would share one link, and either parent's click
+     * would silently unsubscribe the other. The generic mechanism is tested in
+     * `queue-deliveries.test.ts`; this pins it where it is actually used.
+     */
+    expect(tokens[0]).not.toEqual(tokens[1]);
+    expect(verifyUnsubscribeToken(tokens[0]!)).toBe("a1");
+    expect(verifyUnsubscribeToken(tokens[1]!)).toBe("a2");
   });
 
   it("queues exactly one set of rows when two sends race", async () => {
