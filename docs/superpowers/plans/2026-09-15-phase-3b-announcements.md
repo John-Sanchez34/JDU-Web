@@ -3858,7 +3858,7 @@ import {
   syncOccurrencesForOffering,
 } from "@/db/queries/class-occurrences";
 import { requestEnrollment } from "@/db/queries/enrollments";
-import { markSent } from "@/db/queries/email-deliveries";
+import { claimForSend, markSent } from "@/db/queries/email-deliveries";
 import { classOccurrences, emailDeliveries, user } from "@/db/schema";
 
 describe("cancelling and restoring an occurrence", () => {
@@ -3987,6 +3987,48 @@ describe("cancelling and restoring an occurrence", () => {
     if (result.ok) expect(result.deliveryIds).toHaveLength(1);
     // The sent cancellation stays on the record — it really was sent.
     expect(await deliveriesFor(occurrence.id, "class.cancelled")).toHaveLength(1);
+    const restored = await deliveriesFor(occurrence.id, "class.restored");
+    expect(restored).toHaveLength(1);
+    expect(restored[0]!.recipientEmail).toBe("a1@example.com");
+  });
+
+  it("tells a recipient whose cancellation was still in flight", async () => {
+    const { occurrence } = await seedRosterOfOne();
+    const cancelled = await cancelOccurrence(db, {
+      occurrenceId: occurrence.id,
+      reason: "Mistake.",
+      actorUserId: null,
+    });
+    if (!cancelled.ok) throw new Error("expected the cancellation to succeed");
+    /*
+     * Claim the row without completing the send. This is the awkward case the
+     * `sending` half of the status filter exists for: the message is with the
+     * provider at the instant staff change their mind, so it cannot be
+     * unsent, and its recipient must be treated as already told.
+     */
+    const claimed = await claimForSend(db, cancelled.deliveryIds[0]!);
+    expect(claimed?.status).toBe("sending");
+
+    const result = await restoreOccurrence(db, {
+      occurrenceId: occurrence.id,
+      actorUserId: null,
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.deliveryIds).toHaveLength(1);
+
+    // The in-flight cancellation is left exactly where it was — not deleted,
+    // because it may already have reached the family.
+    const stillSending = await deliveriesFor(occurrence.id, "class.cancelled");
+    expect(stillSending).toHaveLength(1);
+    expect(stillSending[0]!.status).toBe("sending");
+
+    /*
+     * And its recipient is told the class is back on. Drop "sending" from the
+     * status filter in `restoreOccurrence` and this expectation goes to zero:
+     * the family would sit out a class that is running, which is the whole
+     * failure the restore exists to prevent.
+     */
     const restored = await deliveriesFor(occurrence.id, "class.restored");
     expect(restored).toHaveLength(1);
     expect(restored[0]!.recipientEmail).toBe("a1@example.com");
