@@ -4615,7 +4615,15 @@ test.describe("announcements", () => {
   });
 
   test("staff draft, publish and send an announcement", async ({ browser }) => {
-    await signUp(await (await browser.newContext()).newPage(), "News Staff", staffEmail);
+    /*
+     * Sign the staff account up in a throwaway context and close it. Signing
+     * up leaves the browser holding a parent session; the staff work below
+     * needs a context that was signed in AFTER the role was promoted, because
+     * the session cookie carries the role.
+     */
+    const signUpContext = await browser.newContext();
+    await signUp(await signUpContext.newPage(), "News Staff", staffEmail);
+    await signUpContext.close();
     await promoteToStaff(staffEmail);
 
     const context = await browser.newContext();
