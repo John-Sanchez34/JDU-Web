@@ -4,7 +4,7 @@ import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { db } from "@/db";
 import { getDelivery } from "@/db/queries/email-deliveries";
-import { deliverQueued } from "@/lib/notifications/deliver";
+import { deliverBatchForSource, deliverQueued } from "@/lib/notifications/deliver";
 import { recordAudit } from "@/db/queries/audit-log";
 import {
   cancelOccurrence,
@@ -34,7 +34,6 @@ import {
   enrollmentIdSchema,
 } from "@/lib/enrollment-validation";
 import { requireStaff } from "@/lib/guards";
-import { deliverBatchForSource } from "@/lib/notifications/deliver";
 
 /*
  * Same shape as the portal actions, for the same reason: `useActionState`
