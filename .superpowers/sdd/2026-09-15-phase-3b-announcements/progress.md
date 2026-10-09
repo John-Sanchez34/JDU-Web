@@ -910,7 +910,7 @@ catch a missing enrollment — but this line proves nothing on its own, and it
 is the same shape as the other four: a test that could not detect the thing it
 names being wrong. The log predicted a fifth would turn up. This is it.
 
-TO RESUME, in this order (steps renumbered; old step 1 is done):
+TO RESUME — SUPERSEDED by the fix-round entry at the end of this file:
 
 1. Review Task 12 — the diff is `d22031c..f434e2c`. Base is `d22031c`, which
    is `f434e2c`'s parent; do not use HEAD~1 blindly.
@@ -950,3 +950,91 @@ Still not in scope, raise to John at the end: `README.md` says "Phase 1
 complete" and lists none of the new routes. He was offered a README refresh at
 the start of the session and chose Phase 3b instead; he was reminded again on
 2026-10-09 and has not asked for it yet.
+
+================================================================
+2026-10-09 (later) — TASK 12 REVIEWED AND FIXED — RESUME HERE
+================================================================
+
+Reviewed `d22031c..f434e2c` with `/code-review`. Six findings, all in
+`announcements.spec.ts`, all fixed in `aaecc3a` together with the two items
+this log had queued for Task 12's fix round. Branch is 30 commits, pushed,
+local and remote 0/0. Nothing merged, no PR.
+
+THE HIGH-SEVERITY FINDING was the one this log predicted. The wait after
+"Request seat" matched `/seat is held|request/i`, which hits the "Request a
+class seat" heading and the "Requesting a seat holds it right away" blurb —
+both on the page before any click — while "seat is held" matched nothing at
+all, because the page says "seat holds it". It resolved instantly, so the
+scenario ended with the action in flight and teardown able to cancel the
+enrollment every later scenario depends on. That is a sixth instance of the
+pattern, and the second found inside the spec that was meant to be the safety
+net.
+
+Fixing it required seeding capacity 2 instead of 10: `ClassCard` prints an
+exact seat count only at three seats or fewer, so at capacity 10 the card read
+"Space available" before and after and there was no signal to wait for. Worth
+remembering — the obvious fix of "wait for the seat count" is unavailable at
+large capacities.
+
+The other five: no wait after "Save student" (the POST could abort, leaving
+the empty "Add a student" branch with no button); `/0 recipients/` as an
+unanchored substring that "10 recipients" also matches; two database reads
+taken straight after a click; and `portalCellOn`/`cardOn` copied between
+specs, now in `e2e/fixtures/locators.ts`.
+
+Queued items landed too: the column is asserted false between visiting the
+unsubscribe link and pressing the button, and true after, via a new
+`isBroadcastOptedOut` helper that reads `user.broadcastOptedOutAt` directly.
+
+TWO CORRECTIONS TO THIS LOG AND TO THE REVIEW, both from measuring instead of
+reasoning:
+
+1. The review rated the two post-click database reads as passing
+   unconditionally — scenario 4 "would still be green" if the opt-out filter
+   regressed. NOT TRUE on this machine. Probing the row count immediately
+   after the click returned the committed row, so the action lands inside the
+   click-plus-query window and those reads were seeing real data. The waits
+   were kept anyway, because depending on that margin is not something this
+   suite controls and it may not hold in CI, but the code comments now say
+   that rather than claiming a blind spot that was not there. Reviews are
+   evidence, not verdicts; this one was right about four findings out of six
+   and overstated two.
+
+2. Line 924 of this file claimed the `isBroadcastOptedOut` design was "already
+   in `task-12-brief.md`". It is not. It is at line 779 of this file. The
+   brief was never updated with it.
+
+VERIFICATION IS BY MUTATION FROM HERE ON, not by a green run. Given six
+instances of tests that could not detect the thing they name, a passing suite
+proves nothing on its own. Disabling the opt-out filter in
+`resolveAnnouncementAudience` turns scenario 4 red; `db/queries/audience.ts`
+was byte-identical to HEAD afterwards. Note the old loose regex would likely
+have caught that same mutation, since one recipient renders "1 recipient" —
+so it validates the scenario end to end without isolating the zero-audience
+fix. A mutation that isolates a specific assertion is worth more than one that
+merely turns the file red.
+
+TO RESUME, in this order:
+
+1. Task 11 fix round — ONE pass, three items:
+   a. the untested `sending` branch in `restoreOccurrence` (test is already
+      written into `task-11-brief.md` Step 4-ish, and into the plan);
+   b. the two-parents-two-tokens test (already in `task-6-brief.md`);
+   c. the duplicate `@/lib/notifications/deliver` import in
+      `app/admin/actions.ts` lines 7 and 37 — merge into one statement.
+2. Final whole-branch review over `f4b7208..HEAD` on the most capable model,
+   AFTER the Task 11 round lands so it sees the finished branch. Point it at
+   the deferred minors below, at the pattern, and at the six instances of it.
+3. Then `superpowers:finishing-a-development-branch`.
+
+Deferred minors for the final review (unchanged):
+1. Task 2 — `signUnsubscribeToken("")` mints a token `verifyUnsubscribeToken`
+   rejects; untested asymmetry, unreachable by any current caller.
+2. Task 10 — no test for `setBroadcastOptOut(db, <unknown user>, false)`.
+3. Task 11 — a few lines in `class-occurrences.ts` exceed the file's usual
+   ~100-column wrapping. Cosmetic.
+
+Note on this file: it is now TRACKED (force-added past `.gitignore` on John's
+request), so it no longer updates silently — every plan change needs a commit
+or the pushed copy goes stale. The environment notes in the previous entry
+still hold.
