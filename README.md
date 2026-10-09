@@ -1,12 +1,21 @@
 # JDU Web
 
 The website for a small dance studio: a public marketing site and class
-catalog, a parent portal for managing students, and a staff backoffice for
-seasons and class offerings.
+catalog, a parent portal where families manage students and their class seats,
+and a staff backoffice for seasons, offerings, enrollment, and studio news.
 
-**Status:** Phase 1 complete. The site is usable end to end — families can
-register, add students, and browse the catalog and weekly schedule; staff can
-create seasons and classes and publish them.
+**Status:** Phases 1 through 3b complete.
+
+- **Phase 1 — foundation.** Families register, add students, and browse the
+  class catalog and weekly schedule. Staff create seasons and classes and
+  publish them.
+- **Phase 2 — enrollment.** Families request a seat, staff confirm it, and
+  either side can release it. Seat counts move with the requests.
+- **Phase 3a — notifications.** Enrollment email, queued and sent after the
+  response, with a staff retry page for anything that failed.
+- **Phase 3b — announcements and cancellations.** Staff post studio news to
+  the site and optionally email it, cancel and restore individual class dates,
+  and families can opt out of studio news without losing the mail they need.
 
 ## What this application does not do
 
@@ -16,10 +25,9 @@ invoices, and no balances — by design, not by sequencing. Class prices are
 *displayed* so families know what a class costs, and nothing sums or
 accumulates them.
 
-There is also no enrollment button yet. The `seats_taken` column exists and
-stays at zero; it is there so a later phase adds behavior rather than
-restructuring the table. Families who want to enroll contact the studio, and
-staff record it manually.
+A confirmed seat therefore means "staff saw the payment", not "the system took
+one". Requesting a seat holds it immediately; confirming it is a staff action
+taken after the family brings payment to the studio in person.
 
 ## Stack
 
@@ -63,9 +71,17 @@ Then fill in `.env`:
 | `DATABASE_URL` | Connection string for the development database |
 | `TEST_DATABASE_URL` | Connection string for the test database — **must differ** from the above |
 | `BETTER_AUTH_SECRET` | Session signing secret; generate with `openssl rand -base64 32` |
-| `BETTER_AUTH_URL` | Base URL of the app (`http://localhost:3000` in development) |
-| `RESEND_API_KEY` | Resend API key, used to send verification email |
-| `EMAIL_FROM` | From address on transactional email |
+| `BETTER_AUTH_URL` | Base URL of the app (`http://localhost:3000` in development). Also the origin of every unsubscribe link, so a wrong value mints links that go nowhere |
+| `RESEND_API_KEY` | Resend API key, used to send all outbound email |
+| `EMAIL_FROM` | From address on outbound email |
+
+Two more are set only by the test suites and must never be set in a real
+environment — `.env.example` documents both:
+
+| Variable | What it is |
+| --- | --- |
+| `E2E_SKIP_EMAIL_VERIFICATION` | Disables the email verification requirement at sign-in. Set by `playwright.config.ts` only |
+| `EMAIL_TRANSPORT` | `capture` short-circuits sending and returns a synthetic message id, so no test can reach the real provider |
 
 `.env` is gitignored. Every variable is validated at startup by `lib/env.ts`,
 so a missing one fails immediately with a clear message rather than at the
@@ -139,21 +155,34 @@ suite** — it disables the email verification requirement at sign-in.
 
 ```
 app/
-  (public)/     Marketing site, class catalog, weekly schedule
-  (auth)/       Sign in, sign up, verify
-  portal/       Parent portal (requires a session)
-  admin/        Staff backoffice (requires the staff or admin role)
-  api/auth/     Better Auth route handler
-components/     Shared React components
-content/        Studio copy — the owner edits this, not page code
+  (public)/        Marketing site, catalog, schedule, announcements
+  (auth)/          Sign in, sign up, verify
+  portal/          Parent portal (requires a session)
+    enrollments/   Seat requests and their status
+    announcements/ Studio news, including class-targeted posts
+    preferences/   Opt in or out of studio news
+  admin/           Staff backoffice (requires the staff or admin role)
+    seasons/       Create a season, open registration
+    classes/       Offerings, and cancelling or restoring a date
+    enrollments/   Confirm or release requested seats
+    announcements/ Draft, publish, and send studio news
+    emails/        Delivery log and retry
+  unsubscribe/     One-click opt-out page (GET renders, POST acts)
+  api/auth/        Better Auth route handler
+  api/unsubscribe/ The endpoint List-Unsubscribe-Post points at
+components/        Shared React components
+content/           Studio copy — the owner edits this, not page code
 db/
-  schema/       Drizzle table definitions
-  queries/      All database access
-lib/            Auth, guards, validation, formatting, date helpers
-tests/          Unit and integration tests
-e2e/            Playwright end-to-end tests
-drizzle/        Generated SQL migrations
-docs/           Design spec and implementation plan
+  schema/          Drizzle table definitions
+  queries/         All database access
+lib/
+  emails/          Per-template rendering
+  notifications/   The delivery runner — queueing, pacing, retry
+  ...              Auth, guards, validation, formatting, date helpers
+tests/             Unit and integration tests
+e2e/               Playwright end-to-end tests
+drizzle/           Generated SQL migrations
+docs/              Design specs and implementation plans
 ```
 
 ## Conventions that matter
@@ -183,6 +212,20 @@ constant or object from one makes every page that imports it fail to load at
 runtime. This is why `ActionState` and `idleState` live in
 `lib/action-state.ts` rather than beside the actions that use them.
 
+**Every email is either `broadcast` or `transactional`, and the two obey
+opposite rules.** Broadcast mail — studio news — carries an unsubscribe link
+in its footer and `List-Unsubscribe` / `List-Unsubscribe-Post` headers, and
+skips anyone who has opted out. Transactional mail — enrollment, a cancelled
+class date — carries neither header nor link and reaches people regardless of
+their preference, because it is the mail they need to know their child's class
+changed. The opt-out filter lives in `resolveAnnouncementAudience` and nowhere
+else; `resolveOccurrenceAudience` deliberately has none.
+
+**Visiting an unsubscribe link must never opt anyone out.** `/unsubscribe`
+renders a form and touches nothing; only the POST to `/api/unsubscribe` acts.
+Corporate mail scanners follow every link in every message, so a GET that
+unsubscribed would silently unsubscribe families who never clicked.
+
 ## Making yourself an admin
 
 There is deliberately no self-service path to an elevated role. The first staff
@@ -205,9 +248,14 @@ another database:
 DATABASE_URL="postgres://..." npm run set-role -- you@example.com admin
 ```
 
-Sign out and back in so the session picks up the new role. You can then reach
-`/admin` to create a season and add classes. Publishing a class makes it appear
-on `/classes` and its occurrences on `/schedule`.
+Sign out and back in so the session picks up the new role — the role is carried
+in the session cookie, so a session opened before the change still sees the old
+one.
+
+You can then reach `/admin` to create a season and add classes. Publishing a
+class makes it appear on `/classes` and its occurrences on `/schedule`. Opening
+registration on the season lets families request seats, which arrive at
+`/admin/enrollments` for confirmation.
 
 ## Brand assets
 
@@ -239,7 +287,18 @@ placeholders and must be replaced before launch.**
 
 ## Documentation
 
-- `docs/superpowers/specs/2026-08-14-dance-studio-website-design.md` — system
-  design and the reasoning behind it
-- `docs/superpowers/plans/2026-08-14-phase-1-foundation.md` — the Phase 1
-  implementation plan, task by task
+Design specs carry the reasoning; plans carry the task-by-task implementation.
+
+- `specs/2026-08-14-dance-studio-website-design.md` — the system design and the
+  reasoning behind it
+- `specs/2026-08-28-phase-3a-notifications-design.md` — how email is queued,
+  paced, and retried
+- `specs/2026-09-15-phase-3b-announcements-design.md` — announcements,
+  cancellations, and the opt-out model
+- `plans/2026-08-14-phase-1-foundation.md` — Phase 1
+- `plans/2026-08-19-phase-2-enrollment.md` — Phase 2 (plan only; its design is
+  covered by the system design above)
+- `plans/2026-08-28-phase-3a-notifications.md` — Phase 3a
+- `plans/2026-09-15-phase-3b-announcements.md` — Phase 3b
+
+All paths are relative to `docs/superpowers/`.
