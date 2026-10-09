@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import * as schema from "@/db/schema";
 import { user } from "@/db/schema";
@@ -59,4 +59,60 @@ export async function findUserByEmail(
     .where(eq(user.email, email));
 
   return found ?? null;
+}
+
+/**
+ * Sets or clears the broadcast opt-out. Returns false when no such account
+ * exists.
+ *
+ * Opting out twice keeps the original timestamp: the fact recorded is when
+ * somebody asked to stop receiving studio news, not when they last pressed a
+ * button. That is the date you want if a complaint ever has to be answered.
+ *
+ * Deliberately not family-scoped. The caller is either the account itself
+ * through the portal, or an unauthenticated one-click unsubscribe whose only
+ * credential is a signed token naming this exact user.
+ */
+export async function setBroadcastOptOut(
+  db: Database,
+  userId: string,
+  optedOut: boolean,
+): Promise<boolean> {
+  if (!optedOut) {
+    const cleared = await db
+      .update(user)
+      .set({ broadcastOptedOutAt: null, updatedAt: new Date() })
+      .where(eq(user.id, userId))
+      .returning({ id: user.id });
+    return cleared.length > 0;
+  }
+
+  const updated = await db
+    .update(user)
+    .set({ broadcastOptedOutAt: new Date(), updatedAt: new Date() })
+    .where(and(eq(user.id, userId), isNull(user.broadcastOptedOutAt)))
+    .returning({ id: user.id });
+  if (updated.length > 0) return true;
+
+  // Nothing changed: either they were already opted out, or there is no such
+  // account. Only the second is a failure.
+  const [existing] = await db
+    .select({ id: user.id })
+    .from(user)
+    .where(eq(user.id, userId))
+    .limit(1);
+  return existing !== undefined;
+}
+
+/** One account by id, for reading its own preferences back. */
+export async function findUserById(
+  db: Database,
+  userId: string,
+): Promise<{ id: string; broadcastOptedOutAt: Date | null } | null> {
+  const [row] = await db
+    .select({ id: user.id, broadcastOptedOutAt: user.broadcastOptedOutAt })
+    .from(user)
+    .where(eq(user.id, userId))
+    .limit(1);
+  return row ?? null;
 }

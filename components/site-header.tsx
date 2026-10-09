@@ -5,6 +5,7 @@ import { StudioWordmark } from "@/components/studio-wordmark";
 const links = [
   { href: "/classes", label: "Classes" },
   { href: "/schedule", label: "Schedule" },
+  { href: "/announcements", label: "News" },
   { href: "/staff", label: "Staff" },
   { href: "/contact", label: "Contact" },
 ];

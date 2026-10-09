@@ -4,9 +4,13 @@ import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { db } from "@/db";
 import { getDelivery } from "@/db/queries/email-deliveries";
-import { deliverQueued } from "@/lib/notifications/deliver";
+import { deliverBatchForSource, deliverQueued } from "@/lib/notifications/deliver";
 import { recordAudit } from "@/db/queries/audit-log";
-import { syncOccurrencesForOffering } from "@/db/queries/class-occurrences";
+import {
+  cancelOccurrence,
+  restoreOccurrence,
+  syncOccurrencesForOffering,
+} from "@/db/queries/class-occurrences";
 import {
   createOffering,
   getOffering,
@@ -19,7 +23,12 @@ import {
 } from "@/db/queries/enrollments";
 import { createSeason } from "@/db/queries/seasons";
 import type { ActionState } from "@/lib/action-state";
-import { offeringInputSchema, seasonInputSchema } from "@/lib/admin-validation";
+import {
+  occurrenceCancelSchema,
+  occurrenceIdSchema,
+  offeringInputSchema,
+  seasonInputSchema,
+} from "@/lib/admin-validation";
 import {
   deliveryIdSchema,
   enrollmentIdSchema,
@@ -259,5 +268,80 @@ export async function retryDeliveryAction(
     return { error: delivery?.error ?? "That message could not be sent." };
   }
 
+  return { error: null };
+}
+
+export async function cancelOccurrenceAction(
+  _prevState: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const staff = await requireStaff();
+  const parsed = occurrenceCancelSchema.safeParse(toObject(formData));
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Please check the form." };
+  }
+
+  const result = await cancelOccurrence(db, {
+    occurrenceId: parsed.data.occurrenceId,
+    reason: parsed.data.reason,
+    actorUserId: staff.id,
+  });
+  if (!result.ok) {
+    return {
+      error:
+        result.reason === "not-found"
+          ? "That class date no longer exists."
+          : "That date is already cancelled.",
+    };
+  }
+
+  // A roster cannot exceed capacity, so one batch always covers it — but it
+  // goes through the same paced runner as a fan-out.
+  after(() =>
+    deliverBatchForSource(db, {
+      sourceType: "class_occurrence",
+      sourceId: parsed.data.occurrenceId,
+    }),
+  );
+
+  revalidatePath(`/admin/classes/${parsed.data.offeringId}`);
+  revalidatePath("/schedule");
+  return { error: null };
+}
+
+export async function restoreOccurrenceAction(
+  _prevState: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const staff = await requireStaff();
+  const parsed = occurrenceIdSchema.safeParse(toObject(formData));
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Please check the form." };
+  }
+
+  const result = await restoreOccurrence(db, {
+    occurrenceId: parsed.data.occurrenceId,
+    actorUserId: staff.id,
+  });
+  if (!result.ok) {
+    return {
+      error:
+        result.reason === "not-found"
+          ? "That class date no longer exists."
+          : "That date is not cancelled.",
+    };
+  }
+
+  if (result.deliveryIds.length > 0) {
+    after(() =>
+      deliverBatchForSource(db, {
+        sourceType: "class_occurrence",
+        sourceId: parsed.data.occurrenceId,
+      }),
+    );
+  }
+
+  revalidatePath(`/admin/classes/${parsed.data.offeringId}`);
+  revalidatePath("/schedule");
   return { error: null };
 }

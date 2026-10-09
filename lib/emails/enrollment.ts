@@ -1,7 +1,9 @@
 import type { DayOfWeek } from "@/db/schema";
 import { formatDayOfWeek } from "@/lib/dates";
 import { formatCents, formatTimeRange } from "@/lib/format";
-import { escapeHtml, wrapHtml } from "./layout";
+import { escapeHtml, wrapHtml, type RenderedEmail } from "./layout";
+
+export type { RenderedEmail };
 
 export type EnrollmentEmailTemplate =
   | "enrollment.requested"
@@ -18,8 +20,6 @@ export type EnrollmentEmailData = {
   monthlyPriceCents: number;
   seasonFeeCents: number;
 };
-
-export type RenderedEmail = { subject: string; text: string; html: string };
 
 /** "Ballet I — Monday, 4:00 PM – 5:00 PM" */
 function whenLine(data: EnrollmentEmailData): string {

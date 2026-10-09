@@ -1,7 +1,19 @@
 import { vi } from "vitest";
 
 // Mock sendEmail to fail for a specific email and succeed for others.
-vi.mock("@/lib/email", () => ({
+//
+// Spreads the real module rather than replacing it outright: lib/email.ts now
+// exports EmailSendError too, and deliverQueued does `instanceof EmailSendError`
+// to tell a rate limit apart from an ordinary failure. A factory that only
+// defined sendEmail would make that export undefined here and throw. The next
+// person who adds an export to lib/email.ts gets the same for free.
+//
+// The thrown error here is deliberately a plain Error, not an EmailSendError —
+// that exercises the path where something other than our typed error reaches
+// the catch, which must still mark the row failed rather than be mistaken for
+// a rate limit.
+vi.mock("@/lib/email", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/email")>()),
   sendEmail: vi.fn(async ({ to }: { to: string }) => {
     if (to === "fails@example.com") {
       throw new Error("Invalid email address");

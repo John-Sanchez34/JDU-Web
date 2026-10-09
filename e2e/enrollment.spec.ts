@@ -1,4 +1,6 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
+import { signIn, signUp } from "./fixtures/auth";
+import { cardOn, portalCellOn } from "./fixtures/locators";
 import {
   deliveriesForEnrollment,
   latestEnrollmentIdFor,
@@ -7,8 +9,6 @@ import {
   type SeededClass,
 } from "./fixtures/seed";
 
-const PASSWORD = "correct-horse-battery";
-
 /*
  * One thread of the enrollment path, in order: a parent requests a seat, staff
  * confirm it, and the parent gives it back. Each scenario builds on the last,
@@ -16,42 +16,6 @@ const PASSWORD = "correct-horse-battery";
  * same broken state four times.
  */
 test.describe.configure({ mode: "serial" });
-
-async function signUp(page: Page, name: string, email: string) {
-  await page.goto("/sign-up");
-  await page.getByLabel("Your name").fill(name);
-  await page.getByLabel("Email").fill(email);
-  await page.getByLabel("Password").fill(PASSWORD);
-  await page.getByRole("button", { name: "Create account" }).click();
-  // Sign-up is an async request; navigating away before it lands would cancel
-  // it, so wait for the redirect that only happens on success.
-  await expect(page).toHaveURL(/\/verify$/);
-}
-
-async function signIn(page: Page, email: string) {
-  await page.goto("/sign-in");
-  await page.getByLabel("Email").fill(email);
-  await page.getByLabel("Password").fill(PASSWORD);
-  await page.getByRole("button", { name: "Sign in" }).click();
-  // Same hazard as sign-up: navigating away while the sign-in request is in
-  // flight cancels it and leaves the page signed out, so wait for the redirect.
-  await expect(page).not.toHaveURL(/\/sign-in$/);
-}
-
-/** The public catalog card for one class, by its heading. */
-function cardOn(page: Page, className: string) {
-  return page.locator("article").filter({
-    has: page.getByRole("heading", { name: className }),
-  });
-}
-
-/** The portal cell wrapping a class card and its request form. */
-function portalCellOn(page: Page, className: string) {
-  return page
-    .locator("div")
-    .filter({ has: page.getByRole("heading", { name: className }) })
-    .last();
-}
 
 test.describe("enrollment", () => {
   let open: SeededClass;
@@ -88,6 +52,18 @@ test.describe("enrollment", () => {
     await portalCellOn(page, open.className)
       .getByRole("button", { name: "Request seat" })
       .click();
+
+    /*
+     * The request form is a client component with no success message, so
+     * `.click()` resolves before the action commits. Navigating away here
+     * races it: the enrollments page is server-rendered, so a goto that wins
+     * the race renders "No class requests yet." and never re-fetches, which
+     * no `toBeVisible` timeout can recover from. The card's seat count
+     * dropping is the signal that the seat was really taken.
+     */
+    await expect(
+      cardOn(page, open.className).getByText("1 spot left"),
+    ).toBeVisible();
 
     await page.goto("/portal/enrollments");
     await expect(page.getByText("Requested")).toBeVisible();

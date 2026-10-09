@@ -1,4 +1,4 @@
-import { asc, desc, eq, like } from "drizzle-orm";
+import { and, asc, desc, eq, like } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import { syncOccurrencesForOffering } from "@/db/queries/class-occurrences";
@@ -6,7 +6,9 @@ import { createOffering } from "@/db/queries/class-offerings";
 import { createSeason } from "@/db/queries/seasons";
 import * as schema from "@/db/schema";
 import {
+  announcements,
   classOfferings,
+  classOccurrences,
   emailDeliveries,
   enrollments,
   seasons,
@@ -112,6 +114,13 @@ export async function seedOpenSeasonWithClass(
       // does not wipe deliveries mid-scenario.
       await db.delete(emailDeliveries);
 
+      // Studio-wide announcements carry no `classOfferingId`, so deleting
+      // seasons never cascades them away and they survive every run. The
+      // public page and `latestAnnouncementId` both assume this run's
+      // announcement is the only one with its title, so clear them in the
+      // same branch and for the same reason as the deliveries above.
+      await db.delete(announcements);
+
       const season = await createSeason(db, {
         name: `E2E ${year}`,
         startDate: `${year}-01-01`,
@@ -191,5 +200,69 @@ export async function latestEnrollmentIdFor(firstName: string): Promise<string> 
       .limit(1);
     if (!row) throw new Error(`no enrollment found for ${firstName}`);
     return row.id;
+  });
+}
+
+/** Every delivery row belonging to one source, oldest first. */
+export async function deliveriesForSource(sourceType: "announcement" | "class_occurrence", sourceId: string) {
+  return withDb((db) =>
+    db
+      .select()
+      .from(emailDeliveries)
+      .where(
+        and(eq(emailDeliveries.sourceType, sourceType), eq(emailDeliveries.sourceId, sourceId)),
+      )
+      .orderBy(asc(emailDeliveries.createdAt), asc(emailDeliveries.id)),
+  );
+}
+
+/** The most recently created announcement, which is the one the test just made. */
+export async function latestAnnouncementId(): Promise<string> {
+  return withDb(async (db) => {
+    const [row] = await db
+      .select({ id: announcements.id })
+      .from(announcements)
+      .orderBy(desc(announcements.createdAt))
+      .limit(1);
+    if (!row) throw new Error("no announcement found");
+    return row.id;
+  });
+}
+
+/** The cancelled occurrence of a class, by the class's name. */
+export async function cancelledOccurrenceIdFor(className: string): Promise<string> {
+  return withDb(async (db) => {
+    const [row] = await db
+      .select({ id: classOccurrences.id })
+      .from(classOccurrences)
+      .innerJoin(classOfferings, eq(classOfferings.id, classOccurrences.classOfferingId))
+      .where(
+        and(eq(classOfferings.name, className), eq(classOccurrences.status, "cancelled")),
+      )
+      .orderBy(asc(classOccurrences.date))
+      .limit(1);
+    if (!row) throw new Error(`no cancelled occurrence found for ${className}`);
+    return row.id;
+  });
+}
+
+/**
+ * Whether a login has opted out of broadcasts, read from
+ * `user.broadcastOptedOutAt` directly.
+ *
+ * Deliberately not inferred from whether a later send reached them: an empty
+ * send cannot distinguish "not opted out" from "opted out, but that audience
+ * was empty anyway", and telling those two apart is the entire point of the
+ * assertion that uses this.
+ */
+export async function isBroadcastOptedOut(email: string): Promise<boolean> {
+  return withDb(async (db) => {
+    const [row] = await db
+      .select({ optedOutAt: user.broadcastOptedOutAt })
+      .from(user)
+      .where(eq(user.email, email))
+      .limit(1);
+    if (!row) throw new Error(`no user found for ${email}`);
+    return row.optedOutAt !== null;
   });
 }

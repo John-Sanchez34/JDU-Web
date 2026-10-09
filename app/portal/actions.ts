@@ -7,6 +7,7 @@ import { db } from "@/db";
 import { deliverQueued } from "@/lib/notifications/deliver";
 import { requestEnrollment, withdrawEnrollment } from "@/db/queries/enrollments";
 import { createStudent, updateStudent } from "@/db/queries/students";
+import { setBroadcastOptOut } from "@/db/queries/users";
 import {
   enrollmentIdSchema,
   enrollmentRequestSchema,
@@ -156,5 +157,21 @@ export async function withdrawEnrollmentAction(
   // router-cache reason described in requestEnrollmentAction above.
   revalidatePath("/portal/enrollments");
   revalidatePath("/classes");
+  return { error: null };
+}
+
+export async function setBroadcastPreferenceAction(
+  _prevState: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const sessionUser = await requireUser();
+  // The form carries the state it wants, not a toggle, so a double submit
+  // lands on the same value rather than flipping twice.
+  const subscribe = formData.get("subscribe") === "yes";
+
+  const changed = await setBroadcastOptOut(db, sessionUser.id, !subscribe);
+  if (!changed) return { error: "We could not save that. Try again." };
+
+  revalidatePath("/portal/preferences");
   return { error: null };
 }

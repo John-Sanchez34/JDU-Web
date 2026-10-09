@@ -19,6 +19,14 @@ export const user = pgTable("user", {
   // must be NOT NULL because every access guard reads it.
   role: text("role").notNull().default("parent"),
   familyId: uuid("family_id").references(() => families.id, { onDelete: "set null" }),
+  /*
+   * Null means subscribed. A timestamp rather than a boolean because the fact
+   * worth keeping is *when* somebody opted out — the question asked if a spam
+   * complaint ever arrives. Timezone-aware unlike the Better Auth columns
+   * above: this one is ours, and every application timestamp in this schema
+   * carries a zone.
+   */
+  broadcastOptedOutAt: timestamp("broadcast_opted_out_at", { withTimezone: true }),
 });
 
 export const session = pgTable(

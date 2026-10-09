@@ -945,8 +945,38 @@ describe("audience resolution", () => {
     const seeded = await seedTwoFamilies(db, 5);
     await addLogin("a1", "a1@example.com", seeded.familyA.id);
     await addLogin("b1", "b1@example.com", seeded.familyB.id);
+    /*
+     * Family B must hold a live seat of its own, in a DIFFERENT class.
+     * Without that, b1 would be absent from the result whether or not the
+     * class predicate did anything at all — the test would pass against a
+     * query that ignored `classOfferingId` entirely, which is exactly the
+     * bug it is supposed to catch.
+     */
+    const [other] = await db
+      .insert(classOfferings)
+      .values({
+        seasonId: seeded.offering.seasonId,
+        name: "Jazz I",
+        dayOfWeek: "wednesday",
+        startTime: "17:00:00",
+        endTime: "18:00:00",
+        capacity: 5,
+        monthlyPriceCents: 8500,
+        published: true,
+      })
+      .returning();
     await request(seeded.familyA.id, seeded.studentA.id, seeded.offering.id);
+    await request(seeded.familyB.id, seeded.studentB.id, other!.id);
 
+    // Both families are in the season, so "everyone" reaches both …
+    const everyone = await resolveAnnouncementAudience(
+      db,
+      { audienceType: "all", classOfferingId: null },
+      TODAY,
+    );
+    expect(everyone.map((r) => r.email)).toEqual(["a1@example.com", "b1@example.com"]);
+
+    // … and naming one class cuts it to that class's family.
     const recipients = await resolveAnnouncementAudience(
       db,
       { audienceType: "class_offering", classOfferingId: seeded.offering.id },
@@ -1417,10 +1447,49 @@ export async function countDeliveriesByStatus(
 }
 ```
 
+- [ ] **Step 3a: Make `queueEnrollmentEmails` use it**
+
+`queueEnrollmentEmails` ends by building delivery rows in a `.map` and
+inserting them — which is now exactly what `queueDeliveries` does, with a
+render that ignores its argument. Generalising the queueing and then leaving
+the case it was generalised from on its own copy is the worst of both choices,
+so replace that tail. The select of `details` and of `recipients` above it
+stays as it is; only the insert goes.
+
+Replace the final `const rows = await exec.insert(emailDeliveries)…` block and
+its `return` with:
+
+```ts
+  return queueDeliveries(exec, {
+    sourceType: "enrollment",
+    sourceId: input.enrollmentId,
+    template: input.template,
+    category: "transactional",
+    // The recipient select yields `{ id, email }`; `Recipient` is
+    // `{ userId, email }`.
+    recipients: recipients.map((recipient) => ({
+      userId: recipient.id,
+      email: recipient.email,
+    })),
+    // Every parent on the family gets the same transactional message — unlike
+    // broadcast, where the body carries a per-recipient unsubscribe link.
+    render: () => rendered,
+  });
+```
+
+The early `if (recipients.length === 0) return [];` guard above can stay or go;
+`queueDeliveries` makes the same check. Keeping it is fine — it avoids a
+pointless render.
+
+`tests/integration/email-queueing.test.ts` and
+`tests/integration/enrollment-email-wiring.test.ts` both cover this function and
+must stay green. If the refactor disturbs either, stop and report it rather
+than adjusting those tests — they are Phase 3a's contract, not yours.
+
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `npx vitest run tests/integration/queue-deliveries.test.ts`
-Expected: 5 passed.
+Run: `npx vitest run tests/integration/queue-deliveries.test.ts tests/integration/email-queueing.test.ts tests/integration/enrollment-email-wiring.test.ts`
+Expected: the 5 new tests pass, and both 3a suites still pass unchanged.
 
 - [ ] **Step 5: Run the full suite and commit**
 
@@ -1448,7 +1517,7 @@ Create `tests/integration/announcements.test.ts`:
 
 ```ts
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
-import { eq } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 import { closeTestDb, getTestDb, resetDatabase, type TestDb } from "@/tests/setup/db";
 import { seedTwoFamilies } from "@/tests/setup/enrollment-fixtures";
 import {
@@ -1459,6 +1528,7 @@ import {
   sendAnnouncement,
 } from "@/db/queries/announcements";
 import { requestEnrollment } from "@/db/queries/enrollments";
+import { verifyUnsubscribeToken } from "@/lib/unsubscribe-token";
 import { announcements, auditLog, emailDeliveries, user } from "@/db/schema";
 
 const TODAY = "2026-10-01";
@@ -1575,6 +1645,47 @@ describe("announcements", () => {
       .from(announcements)
       .where(eq(announcements.id, announcement.id));
     expect(row!.emailedAt).not.toBeNull();
+  });
+
+  it("gives each parent on a family their own unsubscribe link", async () => {
+    const seeded = await seedEnrolledFamily();
+    await db.insert(user).values({
+      id: "a2",
+      name: "Two",
+      email: "a2@example.com",
+      familyId: seeded.familyA.id,
+    });
+    const announcement = await draft();
+    await publishAnnouncement(db, { announcementId: announcement.id, actorUserId: null });
+
+    const result = await sendAnnouncement(db, {
+      announcementId: announcement.id,
+      actorUserId: null,
+      today: TODAY,
+    });
+    expect(result.ok).toBe(true);
+
+    const rows = await db
+      .select()
+      .from(emailDeliveries)
+      .orderBy(asc(emailDeliveries.recipientEmail));
+    expect(rows.map((r) => r.recipientEmail)).toEqual([
+      "a1@example.com",
+      "a2@example.com",
+    ]);
+
+    const tokens = rows.map((r) => r.bodyText.match(/\/unsubscribe\?u=(\S+)/)?.[1]);
+    /*
+     * Two different tokens, each naming its own recipient. This is the
+     * composition that `queueDeliveries`' per-recipient render exists for: if
+     * `sendAnnouncement` ever passed a pre-rendered message instead of a
+     * callback, both parents would share one link, and either parent's click
+     * would silently unsubscribe the other. The generic mechanism is tested in
+     * `queue-deliveries.test.ts`; this pins it where it is actually used.
+     */
+    expect(tokens[0]).not.toEqual(tokens[1]);
+    expect(verifyUnsubscribeToken(tokens[0]!)).toBe("a1");
+    expect(verifyUnsubscribeToken(tokens[1]!)).toBe("a2");
   });
 
   it("queues exactly one set of rows when two sends race", async () => {
@@ -2118,11 +2229,17 @@ Then in `sendEmail`, pass the headers through and throw the typed error:
 
   if (error) {
     console.error("sendEmail failed", { to: message.to, error });
-    const status = (error as { statusCode?: number }).statusCode ?? null;
+    /*
+     * No cast and no fallbacks: Resend 6.20 types its `ErrorResponse` as
+     * `{ message: string; statusCode: number | null; name: RESEND_ERROR_CODE_KEY }`,
+     * and `rate_limit_exceeded` is one of that union's members — so the
+     * rate-limit test below is reading a documented value, not guessing at an
+     * undocumented shape. Verified in `node_modules/resend/dist/index.d.mts`.
+     */
     throw new EmailSendError(
       `Failed to send email: ${error.message}`,
-      status,
-      error.name ?? null,
+      error.statusCode,
+      error.name,
     );
   }
 ```
@@ -2313,9 +2430,114 @@ export async function deliverBatchForSource(
 }
 ```
 
+- [ ] **Step 4a: Prove the rate-limit branch actually releases and stops**
+
+This is the branch that protects a real fan-out: get it wrong and a provider
+hiccup marks a hundred healthy addresses `failed`, each needing a hand retry.
+It needs its own file, because it has to mock the transport and
+`deliver-batch.test.ts` deliberately runs against the real capture transport.
+
+Create `tests/integration/deliver-rate-limit.test.ts`:
+
+```ts
+import { vi } from "vitest";
+
+/*
+ * Succeed once, then rate-limit everything after.
+ *
+ * Counting calls rather than matching an address on purpose: `queueDeliveries`
+ * inserts every row in one statement, so they share a `createdAt` and
+ * `listQueuedForSource` breaks the tie on a random uuid. "The second row sent"
+ * is deterministic; "the row for u2@example.com" is not.
+ */
+vi.mock("@/lib/email", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/email")>();
+  let calls = 0;
+  return {
+    ...actual,
+    sendEmail: vi.fn(async () => {
+      calls += 1;
+      if (calls === 1) return { providerMessageId: "capture-ok" };
+      throw new actual.EmailSendError("Too many requests", 429, "rate_limit_exceeded");
+    }),
+  };
+});
+
+import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { eq } from "drizzle-orm";
+import { closeTestDb, getTestDb, resetDatabase, type TestDb } from "@/tests/setup/db";
+import { queueDeliveries } from "@/db/queries/email-deliveries";
+import { deliverBatchForSource } from "@/lib/notifications/deliver";
+import { emailDeliveries, user } from "@/db/schema";
+
+const SOURCE_ID = "33333333-3333-3333-3333-333333333333";
+
+describe("deliverBatchForSource when the provider rate-limits", () => {
+  let db: TestDb;
+
+  beforeEach(async () => {
+    db = await getTestDb();
+    await resetDatabase();
+    await db.insert(user).values(
+      [1, 2, 3].map((n) => ({ id: `u${n}`, name: `U${n}`, email: `u${n}@example.com` })),
+    );
+    await queueDeliveries(db, {
+      sourceType: "announcement",
+      sourceId: SOURCE_ID,
+      template: "announcement.posted",
+      category: "broadcast",
+      recipients: [1, 2, 3].map((n) => ({ userId: `u${n}`, email: `u${n}@example.com` })),
+      render: () => ({ subject: "Recital", text: "text", html: "<p>html</p>" }),
+    });
+  });
+
+  afterAll(async () => {
+    await closeTestDb();
+  });
+
+  it("releases the claim, stops the batch, and leaves the rest resumable", async () => {
+    const outcome = await deliverBatchForSource(db, {
+      sourceType: "announcement",
+      sourceId: SOURCE_ID,
+      limit: 10,
+      minIntervalMs: 0,
+    });
+
+    expect(outcome.sent).toBe(1);
+    expect(outcome.rateLimited).toBe(true);
+    // Nothing is failed: a rate limit is not the address's fault.
+    expect(outcome.failed).toBe(0);
+    // Both survivors are still sendable, which is what "Send the rest" reads.
+    expect(outcome.remaining).toBe(2);
+
+    const rows = await db
+      .select()
+      .from(emailDeliveries)
+      .where(eq(emailDeliveries.sourceId, SOURCE_ID));
+
+    expect(rows.filter((r) => r.status === "sent")).toHaveLength(1);
+    expect(rows.filter((r) => r.status === "queued")).toHaveLength(2);
+    expect(rows.filter((r) => r.status === "failed")).toHaveLength(0);
+
+    /*
+     * The two queued rows are not interchangeable, and the difference is the
+     * whole point. One was claimed and handed back, so it carries an attempt.
+     * The other was never reached, because the loop broke — if it had kept
+     * going it would carry an attempt too, and a real fan-out would burn
+     * through every remaining address against a provider already saying stop.
+     */
+     const queuedAttempts = rows
+      .filter((r) => r.status === "queued")
+      .map((r) => r.attempts)
+      .sort();
+    expect(queuedAttempts).toEqual([0, 1]);
+  });
+});
+```
+
 - [ ] **Step 5: Run the tests to verify they pass**
 
-Run: `npx vitest run tests/unit/email-transport.test.ts tests/unit/unsubscribe-headers.test.ts tests/integration/deliver-batch.test.ts tests/integration/deliver-queued.test.ts tests/integration/deliver-queued-failure.test.ts`
+Run: `npx vitest run tests/unit/email-transport.test.ts tests/unit/unsubscribe-headers.test.ts tests/integration/deliver-batch.test.ts tests/integration/deliver-rate-limit.test.ts tests/integration/deliver-queued.test.ts tests/integration/deliver-queued-failure.test.ts`
 Expected: all pass. The two 3a delivery suites are included because `deliverQueued` changed underneath them; if either now fails on timing, pass `{ minIntervalMs: 0 }` in that test rather than removing the pacing.
 
 - [ ] **Step 6: Run the full suite and commit**
@@ -2431,7 +2653,11 @@ export const announcementInputSchema = z
   })
   .transform((input) => ({
     ...input,
-    classOfferingId: input.audienceType === "class_offering" ? input.classOfferingId! : null,
+    // `?? null`, not `!`: a missing field parses as `undefined`, and the
+    // refine below checks `!== null` — leaving it `undefined` would let a
+    // class-audience row with no class straight through.
+    classOfferingId:
+      input.audienceType === "class_offering" ? (input.classOfferingId ?? null) : null,
   }))
   .refine((input) => input.audienceType === "all" || input.classOfferingId !== null, {
     message: "Choose which class this is for.",
@@ -2750,7 +2976,7 @@ export function AnnouncementForm({
       </fieldset>
 
       <div>
-        <button type="submit" disabled={pending} className="btn disabled:opacity-50">
+        <button type="submit" disabled={pending} className="btn btn-solid disabled:opacity-50">
           {pending ? "Saving…" : submitLabel}
         </button>
       </div>
@@ -2804,7 +3030,7 @@ function OneButton({
   return (
     <form action={formAction}>
       <input type="hidden" name="announcementId" value={announcementId} />
-      <button type="submit" disabled={pending} className="btn disabled:opacity-50">
+      <button type="submit" disabled={pending} className="btn btn-solid disabled:opacity-50">
         {pending ? pendingLabel : label}
       </button>
       {state.error && (
@@ -2820,14 +3046,23 @@ export function AnnouncementSendPanel({
   announcementId,
   status,
   emailed,
-  remaining,
+  /*
+   * `queued` and `sending` are separate because only `queued` is resumable.
+   * "Send the rest" runs `listQueuedForSource`, which deliberately returns
+   * queued rows only — a row stuck in `sending` is recovered from
+   * /admin/emails instead, once it is old enough to count as abandoned. Gating
+   * the button on queued+sending would show a button that does nothing.
+   */
+  queued,
+  sending,
   recipientCount,
   seasonName,
 }: {
   announcementId: string;
   status: "draft" | "published";
   emailed: boolean;
-  remaining: number;
+  queued: number;
+  sending: number;
   recipientCount: number;
   seasonName: string | null;
 }) {
@@ -2877,14 +3112,17 @@ export function AnnouncementSendPanel({
     );
   }
 
+  const waiting = queued + sending;
+
   return (
     <div className="panel mt-8 p-5">
       <p className="text-mirror">
-        {remaining === 0
+        {waiting === 0
           ? "Every message has gone out."
-          : `${remaining} ${remaining === 1 ? "message is" : "messages are"} still waiting.`}
+          : `${waiting} ${waiting === 1 ? "message is" : "messages are"} still waiting.`}
       </p>
-      {remaining > 0 && (
+
+      {queued > 0 && (
         <div className="mt-4">
           <OneButton
             action={sendRemainingAction}
@@ -2893,6 +3131,15 @@ export function AnnouncementSendPanel({
             pendingLabel="Sending…"
           />
         </div>
+      )}
+
+      {queued === 0 && sending > 0 && (
+        <p className="hint mt-3">
+          {sending === 1 ? "That one is" : "Those are"} mid-send. If{" "}
+          {sending === 1 ? "it is" : "they are"} still here in fifteen minutes,{" "}
+          {sending === 1 ? "it" : "they"} will appear on the Email page to be
+          retried — there is nothing to press here.
+        </p>
       )}
     </div>
   );
@@ -2923,7 +3170,7 @@ export default async function AdminAnnouncementsPage() {
             separate, deliberate step.
           </p>
         </div>
-        <Link href="/admin/announcements/new" className="btn">
+        <Link href="/admin/announcements/new" className="btn btn-solid">
           New announcement
         </Link>
       </div>
@@ -3001,7 +3248,7 @@ import { audienceSeasonId, resolveAnnouncementAudience } from "@/db/queries/audi
 import { listPublishedOfferings } from "@/db/queries/class-offerings";
 import { countDeliveriesByStatus } from "@/db/queries/email-deliveries";
 import { getSeason } from "@/db/queries/seasons";
-import { todayIso } from "@/lib/dates";
+import { formatIsoDate, todayIso } from "@/lib/dates";
 import { requireStaff } from "@/lib/guards";
 
 export default async function AnnouncementPage({
@@ -3036,7 +3283,8 @@ export default async function AnnouncementPage({
         announcementId={announcement.id}
         status={announcement.status}
         emailed={announcement.emailedAt !== null}
-        remaining={counts ? counts.queued + counts.sending : 0}
+        queued={counts?.queued ?? 0}
+        sending={counts?.sending ?? 0}
         recipientCount={recipients.length}
         seasonName={season?.name ?? null}
       />
@@ -3060,7 +3308,8 @@ export default async function AnnouncementPage({
 
       {announcement.emailedAt && (
         <p className="hint mt-6">
-          Emailed on {announcement.emailedAt.toLocaleDateString("en-GB")}. Editing
+          Emailed on{" "}
+          {formatIsoDate(announcement.emailedAt.toISOString().slice(0, 10))}. Editing
           the text below changes the site, not the messages families already
           received — those said what they said.
         </p>
@@ -3107,7 +3356,7 @@ git commit -m "feat: add the admin announcement pages"
 - Create: `app/(public)/announcements/page.tsx`
 - Create: `app/portal/announcements/page.tsx`
 - Modify: `app/portal/layout.tsx`
-- Modify: `app/(public)/layout.tsx`
+- Modify: `components/site-header.tsx` (the public nav lives here, not in the public layout)
 
 **Interfaces:**
 - Consumes: `listPublicAnnouncements`, `listAnnouncementsForFamily` (Task 6); `toParagraphs` (Task 3).
@@ -3130,7 +3379,7 @@ export default async function AnnouncementsPage() {
   const announcements = await listPublicAnnouncements(db);
 
   return (
-    <section className="mx-auto max-w-3xl px-6 py-16">
+    <main className="mx-auto max-w-5xl px-6 py-20">
       <h1 className="display text-3xl uppercase text-chalk">Studio news</h1>
 
       {announcements.length === 0 ? (
@@ -3154,7 +3403,7 @@ export default async function AnnouncementsPage() {
           ))}
         </ul>
       )}
-    </section>
+    </main>
   );
 }
 ```
@@ -3465,7 +3714,7 @@ export default async function UnsubscribePage({
   const valid = u ? verifyUnsubscribeToken(u) !== null : false;
 
   return (
-    <section className="mx-auto max-w-lg px-6 py-24">
+    <main className="mx-auto max-w-lg px-6 py-24">
       <h1 className="display text-2xl uppercase text-chalk">Studio news</h1>
 
       {!valid ? (
@@ -3481,13 +3730,13 @@ export default async function UnsubscribePage({
             class being cancelled — those are not something we can stop.
           </p>
           <form method="post" action={`/api/unsubscribe?u=${encodeURIComponent(u!)}`} className="mt-8">
-            <button type="submit" className="btn">
+            <button type="submit" className="btn btn-solid">
               Unsubscribe from studio news
             </button>
           </form>
         </>
       )}
-    </section>
+    </main>
   );
 }
 ```
@@ -3517,7 +3766,7 @@ export function BroadcastPreferenceForm({ optedOut }: { optedOut: boolean }) {
           ? "You are not receiving studio news."
           : "You are receiving studio news."}
       </p>
-      <button type="submit" disabled={pending} className="btn mt-4 disabled:opacity-50">
+      <button type="submit" disabled={pending} className="btn btn-solid mt-4 disabled:opacity-50">
         {pending ? "Saving…" : optedOut ? "Start receiving studio news" : "Stop receiving studio news"}
       </button>
       {state.error && (
@@ -3651,7 +3900,7 @@ import {
   syncOccurrencesForOffering,
 } from "@/db/queries/class-occurrences";
 import { requestEnrollment } from "@/db/queries/enrollments";
-import { markSent } from "@/db/queries/email-deliveries";
+import { claimForSend, markSent } from "@/db/queries/email-deliveries";
 import { classOccurrences, emailDeliveries, user } from "@/db/schema";
 
 describe("cancelling and restoring an occurrence", () => {
@@ -3785,6 +4034,48 @@ describe("cancelling and restoring an occurrence", () => {
     expect(restored[0]!.recipientEmail).toBe("a1@example.com");
   });
 
+  it("tells a recipient whose cancellation was still in flight", async () => {
+    const { occurrence } = await seedRosterOfOne();
+    const cancelled = await cancelOccurrence(db, {
+      occurrenceId: occurrence.id,
+      reason: "Mistake.",
+      actorUserId: null,
+    });
+    if (!cancelled.ok) throw new Error("expected the cancellation to succeed");
+    /*
+     * Claim the row without completing the send. This is the awkward case the
+     * `sending` half of the status filter exists for: the message is with the
+     * provider at the instant staff change their mind, so it cannot be
+     * unsent, and its recipient must be treated as already told.
+     */
+    const claimed = await claimForSend(db, cancelled.deliveryIds[0]!);
+    expect(claimed?.status).toBe("sending");
+
+    const result = await restoreOccurrence(db, {
+      occurrenceId: occurrence.id,
+      actorUserId: null,
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.deliveryIds).toHaveLength(1);
+
+    // The in-flight cancellation is left exactly where it was — not deleted,
+    // because it may already have reached the family.
+    const stillSending = await deliveriesFor(occurrence.id, "class.cancelled");
+    expect(stillSending).toHaveLength(1);
+    expect(stillSending[0]!.status).toBe("sending");
+
+    /*
+     * And its recipient is told the class is back on. Drop "sending" from the
+     * status filter in `restoreOccurrence` and this expectation goes to zero:
+     * the family would sit out a class that is running, which is the whole
+     * failure the restore exists to prevent.
+     */
+    const restored = await deliveriesFor(occurrence.id, "class.restored");
+    expect(restored).toHaveLength(1);
+    expect(restored[0]!.recipientEmail).toBe("a1@example.com");
+  });
+
   it("refuses to restore an occurrence that is not cancelled", async () => {
     const { occurrence } = await seedRosterOfOne();
 
@@ -3841,7 +4132,6 @@ async function occurrenceEmailData(exec: Transaction, occurrenceId: string) {
   const [row] = await exec
     .select({
       className: classOfferings.name,
-      dayOfWeek: classOfferings.dayOfWeek,
       startTime: classOfferings.startTime,
       endTime: classOfferings.endTime,
       date: classOccurrences.date,
@@ -4013,6 +4303,48 @@ export async function restoreOccurrence(
 
 > `Transaction` comes from `./executor`; add it to that file's type import if it
 > is not already there.
+
+- [ ] **Step 3a: Clear the dead `dayOfWeek` field and close two test gaps**
+
+Task 3's review found that `ClassOccurrenceEmailData.dayOfWeek` is declared and
+never read — `formatIsoDate` already yields the weekday, so `whenLine` gets
+"Monday, 12 October 2026" without it. This task is its only consumer, so retire
+it here rather than letting a later reader assume it matters:
+
+- In `lib/emails/class-occurrence.ts`, delete the `dayOfWeek: DayOfWeek;` field
+  from `ClassOccurrenceEmailData`, and delete the now-unused
+  `import type { DayOfWeek } from "@/db/schema";`.
+- In `tests/unit/broadcast-emails.test.ts`, delete `dayOfWeek` from the
+  `occurrence` fixture.
+- `occurrenceEmailData` above already does not select it.
+
+Then add the two assertions that review also asked for, to
+`tests/unit/broadcast-emails.test.ts`:
+
+```ts
+  it("escapes a staff-written reason on its way into the HTML part", () => {
+    const rendered = renderClassOccurrenceEmail("class.cancelled", {
+      ...occurrence,
+      reason: "Burst pipe <script>alert(1)</script> in Studio B & the hall.",
+    });
+
+    expect(rendered.html).not.toContain("<script>");
+    expect(rendered.html).toContain("&lt;script&gt;");
+    expect(rendered.html).toContain("&amp; the hall.");
+  });
+
+  it("mentions no money in the HTML part either", () => {
+    for (const template of ["class.cancelled", "class.restored"] as const) {
+      const rendered = renderClassOccurrenceEmail(template, occurrence);
+      for (const word of ["$", "refund", "credit", "make-up", "makeup"]) {
+        expect(rendered.html.toLowerCase()).not.toContain(word);
+      }
+    }
+  });
+```
+
+The `reason` field is staff-authored free text that lands in markup, so it
+deserves the same injection test the announcement body already has.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -4357,7 +4689,9 @@ test.describe("announcements", () => {
     await page.getByLabel("First name").fill("Nina");
     await page.getByLabel("Last name").fill("News");
     await page.getByLabel("Date of birth").fill("2015-05-05");
-    await page.getByRole("button", { name: "Add student" }).click();
+    // "Save student" — the label app/portal/students/new/page.tsx passes to
+    // StudentForm. Not "Add student"; check the component before changing it.
+    await page.getByRole("button", { name: "Save student" }).click();
 
     await page.goto("/portal");
     const cell = page
@@ -4369,7 +4703,15 @@ test.describe("announcements", () => {
   });
 
   test("staff draft, publish and send an announcement", async ({ browser }) => {
-    await signUp(await (await browser.newContext()).newPage(), "News Staff", staffEmail);
+    /*
+     * Sign the staff account up in a throwaway context and close it. Signing
+     * up leaves the browser holding a parent session; the staff work below
+     * needs a context that was signed in AFTER the role was promoted, because
+     * the session cookie carries the role.
+     */
+    const signUpContext = await browser.newContext();
+    await signUp(await signUpContext.newPage(), "News Staff", staffEmail);
+    await signUpContext.close();
     await promoteToStaff(staffEmail);
 
     const context = await browser.newContext();
@@ -4416,8 +4758,19 @@ test.describe("announcements", () => {
     expect(link, "the broadcast body must carry an unsubscribe link").toBeTruthy();
 
     await page.goto(link!);
+    /*
+     * Visiting must not opt anybody out. Corporate mail scanners and link
+     * prefetchers follow every link in a message, so a GET that unsubscribes
+     * would quietly unsubscribe families who never clicked anything — and the
+     * studio would see its list shrink with no explanation. Check before
+     * pressing anything: without this line the scenario would pass just as
+     * happily against a page that opted the parent out on load.
+     */
+    expect(await isBroadcastOptedOut(parentEmail)).toBe(false);
+
     await page.getByRole("button", { name: "Unsubscribe from studio news" }).click();
     await expect(page.getByText(/unsubscribed from studio news/i)).toBeVisible();
+    expect(await isBroadcastOptedOut(parentEmail)).toBe(true);
 
     const context = await browser.newContext();
     const staff = await context.newPage();
@@ -4451,10 +4804,74 @@ test.describe("announcements", () => {
 
     await expect(staff.getByText("Cancelled — The instructor is unwell.")).toBeVisible();
 
+    /*
+     * The assertion this test is actually named for. The parent unsubscribed
+     * from studio news in the previous scenario, and a cancellation is
+     * transactional — it must reach them anyway. Checking only that the admin
+     * page says "Cancelled" would pass even if the roster were never told,
+     * which is the failure that matters here.
+     */
+    const occurrenceId = await cancelledOccurrenceIdFor(className);
+    await expect
+      .poll(async () => {
+        const rows = await deliveriesForSource("class_occurrence", occurrenceId);
+        return rows.map((row) => `${row.recipientEmail}:${row.template}:${row.status}`);
+      })
+      .toEqual([`${parentEmail}:class.cancelled:sent`]);
+
+    // And it carries no way to opt out of it.
+    const [delivery] = await deliveriesForSource("class_occurrence", occurrenceId);
+    expect(delivery!.category).toBe("transactional");
+    expect(delivery!.bodyText.toLowerCase()).not.toContain("unsubscribe");
+    expect(delivery!.bodyHtml.toLowerCase()).not.toContain("unsubscribe");
+
     await context.close();
   });
 });
 ```
+
+That needs one more seed helper. Append it to `e2e/fixtures/seed.ts`, beside
+the others:
+
+```ts
+/**
+ * Whether an account has opted out of broadcast mail.
+ *
+ * Read straight from the column rather than inferred from a later send, so the
+ * "a GET must not opt anyone out" assertion can be made at the exact moment
+ * between visiting the page and pressing its button.
+ */
+export async function isBroadcastOptedOut(email: string): Promise<boolean> {
+  return withDb(async (db) => {
+    const [row] = await db
+      .select({ optedOutAt: user.broadcastOptedOutAt })
+      .from(user)
+      .where(eq(user.email, email))
+      .limit(1);
+    if (!row) throw new Error(`no account found for ${email}`);
+    return row.optedOutAt !== null;
+  });
+}
+
+/** The cancelled occurrence of a class, by the class's name. */
+export async function cancelledOccurrenceIdFor(className: string): Promise<string> {
+  return withDb(async (db) => {
+    const [row] = await db
+      .select({ id: classOccurrences.id })
+      .from(classOccurrences)
+      .innerJoin(classOfferings, eq(classOfferings.id, classOccurrences.classOfferingId))
+      .where(
+        and(eq(classOfferings.name, className), eq(classOccurrences.status, "cancelled")),
+      )
+      .orderBy(asc(classOccurrences.date))
+      .limit(1);
+    if (!row) throw new Error(`no cancelled occurrence found for ${className}`);
+    return row.id;
+  });
+}
+```
+
+with `classOccurrences` added to that file's existing `@/db/schema` import.
 
 - [ ] **Step 3: Run the e2e suite**
 

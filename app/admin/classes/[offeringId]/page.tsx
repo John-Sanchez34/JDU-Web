@@ -2,11 +2,13 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { updateOfferingAction } from "@/app/admin/actions";
 import { AdminForm } from "@/components/admin-form";
+import { CancelOccurrenceForm } from "@/components/cancel-occurrence-form";
 import { EnrollmentStatusBadge } from "@/components/enrollment-status-badge";
 import { db } from "@/db";
+import { listUpcomingOccurrences } from "@/db/queries/class-occurrences";
 import { getOffering } from "@/db/queries/class-offerings";
 import { listRoster } from "@/db/queries/enrollments";
-import { formatDayOfWeek } from "@/lib/dates";
+import { formatDayOfWeek, formatIsoDate, todayIso } from "@/lib/dates";
 import { formatCents } from "@/lib/format";
 import { requireStaff } from "@/lib/guards";
 
@@ -42,6 +44,7 @@ export default async function AdminClassPage({
   if (!offering) notFound();
 
   const roster = await listRoster(db, offering.id);
+  const occurrences = await listUpcomingOccurrences(db, offering.id, todayIso());
 
   return (
     <section>
@@ -81,6 +84,37 @@ export default async function AdminClassPage({
           ))}
         </ul>
       )}
+
+      <div className="mt-12">
+        <h3 className="text-lg font-semibold text-chalk">Upcoming dates</h3>
+        <p className="hint mt-2">
+          Cancelling a date emails every family holding a seat in this class.
+          Putting it back tells whoever already heard.
+        </p>
+
+        {occurrences.length === 0 ? (
+          <p className="mt-6 text-mirror">No dates left this season.</p>
+        ) : (
+          <ul className="panel mt-6 divide-y divide-barre/25">
+            {occurrences.map((occurrence) => (
+              <li key={occurrence.id} className="flex flex-wrap items-center gap-4 p-4">
+                <span className="tabular w-56 text-sm text-chalk">
+                  {formatIsoDate(occurrence.date)}
+                </span>
+                <div className="flex-1">
+                  <CancelOccurrenceForm
+                    occurrenceId={occurrence.id}
+                    offeringId={offering.id}
+                    date={formatIsoDate(occurrence.date)}
+                    cancelled={occurrence.status === "cancelled"}
+                    note={occurrence.note}
+                  />
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
 
       <h3 className="mt-10 text-lg font-semibold text-chalk">Edit class</h3>
       <p className="hint mt-2">
