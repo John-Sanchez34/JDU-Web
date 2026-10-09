@@ -1121,7 +1121,7 @@ DEFERRED MINORS: all three ruled on and CLOSED, no change.
 VERIFIED AT THIS COMMIT: typecheck, 227 unit tests across 43 files, build,
 13/13 e2e, every `provider_message_id` beginning "capture-".
 
-TO RESUME:
+TO RESUME — SUPERSEDED by the shipped entry at the end of this file:
 
 1. `superpowers:finishing-a-development-branch`. Every fix round is done and
    every review finding is closed.
@@ -1137,3 +1137,94 @@ TO RESUME:
 
 Note on this file: it is TRACKED (force-added past `.gitignore`), so every
 plan change needs a commit or the pushed copy goes stale.
+
+================================================================
+2026-10-09 (shipped) — PHASE 3b IS MERGED — RESUME HERE
+================================================================
+
+PHASE 3b IS DONE AND ON `main`. Nothing is in flight except one cloud review,
+below.
+
+What happened after the final review landed:
+- `superpowers:finishing-a-development-branch`, option 1 (merge locally). The
+  full suite was re-run on the MERGED result, not just on the branch — a green
+  run only proves the tree it ran on. Typecheck, 227 tests across 43 files,
+  build, 13/13 e2e, every `provider_message_id` beginning "capture-".
+- Fast-forward merge of all 34 commits into `main`; `main` had not moved since
+  the branch was cut, so there is no merge commit.
+- `phase-3b-announcements` deleted locally and on the remote. Before deleting
+  the remote I confirmed it pointed at the SAME commit as `origin/main` with
+  zero commits unique to it, so the delete removed a label, not history.
+- `main` pushed. Verified `origin/main` was an ancestor first, so it was a
+  fast-forward with no force.
+- README brought up to date through Phase 3b (`33aaefb`).
+
+THE README HAD TWO ACTIVELY FALSE CLAIMS, not merely stale ones: it said
+"Phase 1 complete", and it promised there was "no enrollment button yet" with
+`seats_taken` pinned at zero — untrue since Phase 2 shipped in August. Anyone
+reading the repo cold was being told the product did not do the thing it does.
+Worth a check at the end of every phase, not every few phases.
+
+It also gained two entries under "Conventions that matter", which is where
+this repo keeps invariants that are bugs to break even when they typecheck:
+the broadcast-vs-transactional split (opposite rules, and the opt-out filter
+lives in `resolveAnnouncementAudience` and nowhere else), and that visiting an
+unsubscribe link must never opt anyone out. The second is the Phase 3b defect
+with the worst blast radius and it is invisible from reading the route.
+
+CURRENT STATE:
+    main                  33aaefb, 0/0 with origin, tree clean
+    origin branches       main, phase-3b-review-base
+    PR #3                 draft, review-only, MUST NOT BE MERGED
+
+IN FLIGHT — ONE CLOUD REVIEW:
+`/code-review ultra 3` is running against PR #3. That PR is `main` proposed
+against `phase-3b-review-base`, a throwaway branch pinned at `f4b7208` — it
+exists only because ultra needs a reviewable range and the merge had removed
+the branch delta. ULTRA IS CHEAPEST BEFORE THE MERGE; running it afterwards
+cost a scaffold branch and a draft PR. Next phase, run it as the last gate
+before `finishing-a-development-branch`, not after.
+
+The PR body carries the full steering: the defect shape and all seven
+instances, the three cancel/restore defects and that the mechanism was
+reworked in `77a349e` so the fixes deserve a fresh pass, the three invariants,
+the three closed deferred minors, and the verification state.
+
+TO RESUME:
+
+1. Collect the ultra findings. If the session that launched it is gone, they
+   are in the Claude Code cloud session from the `/ultrareview` output; paste
+   them into a new session. VERIFY EACH LOAD-BEARING CLAIM AGAINST THE CODE
+   BEFORE ACTING — two of the six findings in the preceding `max` review did
+   not survive that check (it rated two post-click database reads as passing
+   unconditionally; probing the row count immediately after the click returned
+   the committed row, so they were seeing real data). Reviews are evidence,
+   not verdicts.
+2. Fixes now land on `main` as follow-up commits, not as branch fixes. If a
+   finding is substantial, cut a branch for it rather than committing to
+   `main` directly.
+3. Clean up the scaffolding when the review is done: close PR #3 and delete
+   `phase-3b-review-base` (`git push origin --delete phase-3b-review-base`).
+   Neither is real work.
+
+CARRY INTO PHASE 4 — the two habits that actually found things this phase:
+
+1. VERIFY BY MUTATION, NOT BY A GREEN RUN. Seven times in this phase the
+   implementation was correct and the test could not have detected it being
+   wrong, and the production symptom was always silent mail misdelivery. The
+   worst was caught by deleting the `List-Unsubscribe` spread and watching all
+   222 tests stay green — a guarantee the completion checklist claimed was
+   verified when nothing verified it. Prefer a mutation that reddens ONE test
+   over one that merely reddens the file; the former proves the test isolates
+   its own assertion. And check the mutation actually applied — a multi-line
+   `perl -0pi` once matched 5 lines of a 12-line block and reported green,
+   which read as "the test does not catch this" and nearly became a finding
+   about the test. Count the removed lines.
+2. A WHOLE-BRANCH REVIEW IS NOT A FORMALITY after per-task reviews. The three
+   production defects were all in cancel/restore, all only reachable on a
+   second cycle or after an interrupted send, and all invisible to task-scoped
+   review because each task's diff was correct in isolation. Only the pass
+   over the full range sees state accumulating across operations.
+
+Also still true: this file is TRACKED (force-added past `.gitignore`), so
+every plan change needs a commit or the pushed copy goes stale.
