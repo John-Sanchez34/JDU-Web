@@ -121,7 +121,15 @@ describe("announcements", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]!.category).toBe("broadcast");
     expect(rows[0]!.sourceType).toBe("announcement");
-    expect(rows[0]!.bodyText).toContain("/unsubscribe?u=");
+    /*
+     * The pathname, not a substring: "/api/unsubscribe?u=" contains
+     * "/unsubscribe?u=" too, so a footer that rendered `unsubscribePostUrl`
+     * by mistake would satisfy a `toContain` while sending every family to
+     * an endpoint that only answers POST.
+     */
+    const footerLink = rows[0]!.bodyText.match(/https?:\/\/\S*?\/unsubscribe\?u=\S+/)?.[0];
+    expect(footerLink, "the broadcast body must carry an unsubscribe link").toBeTruthy();
+    expect(new URL(footerLink!).pathname).toBe("/unsubscribe");
     const [row] = await db
       .select()
       .from(announcements)
@@ -156,7 +164,12 @@ describe("announcements", () => {
       "a2@example.com",
     ]);
 
-    const tokens = rows.map((r) => r.bodyText.match(/\/unsubscribe\?u=(\S+)/)?.[1]);
+    const links = rows.map(
+      (r) => r.bodyText.match(/https?:\/\/\S*?\/unsubscribe\?u=\S+/)?.[0],
+    );
+    // Same reason as above: match the page, never the one-click POST endpoint.
+    for (const link of links) expect(new URL(link!).pathname).toBe("/unsubscribe");
+    const tokens = links.map((link) => new URL(link!).searchParams.get("u"));
     /*
      * Two different tokens, each naming its own recipient. This is the
      * composition that `queueDeliveries`' per-recipient render exists for: if

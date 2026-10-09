@@ -1,4 +1,4 @@
-import { and, asc, eq, gte, inArray, lte } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, inArray, lte } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import * as schema from "@/db/schema";
 import {
@@ -164,6 +164,26 @@ export async function cancelOccurrence(
       after: { status: row.status, note: row.note },
     });
 
+    /*
+     * Drop any reinstatement that never went out. `deliverBatchForSource`
+     * takes every queued row for the occurrence regardless of template and
+     * works through them by `createdAt`, so a restoration whose `after()` was
+     * interrupted would be flushed by this cancellation's batch — and the
+     * roster would read "it is going ahead after all" immediately before
+     * being told it is cancelled. The mirror of the cleanup in
+     * `restoreOccurrence`.
+     */
+    await tx
+      .delete(emailDeliveries)
+      .where(
+        and(
+          eq(emailDeliveries.sourceType, "class_occurrence"),
+          eq(emailDeliveries.sourceId, row.id),
+          eq(emailDeliveries.template, "class.restored"),
+          inArray(emailDeliveries.status, ["queued", "failed"]),
+        ),
+      );
+
     const details = await occurrenceEmailData(tx, row.id);
     if (!details) throw new Error(`cancelOccurrence: ${row.id} lost its offering mid-transaction`);
     const recipients = await resolveOccurrenceAudience(tx, row.id);
@@ -227,7 +247,12 @@ export async function restoreOccurrence(
       after: { status: row.status, note: row.note },
     });
 
-    // Never sent, so never send it.
+    /*
+     * Never sent, so never send it. `failed` counts as never sent too: the
+     * family was not told, and the row would otherwise sit on the retry page
+     * with nothing to say it is obsolete, so pressing Retry would announce a
+     * cancellation for a class that is running.
+     */
     await tx
       .delete(emailDeliveries)
       .where(
@@ -235,13 +260,37 @@ export async function restoreOccurrence(
           eq(emailDeliveries.sourceType, "class_occurrence"),
           eq(emailDeliveries.sourceId, row.id),
           eq(emailDeliveries.template, "class.cancelled"),
-          eq(emailDeliveries.status, "queued"),
+          inArray(emailDeliveries.status, ["queued", "failed"]),
         ),
       );
 
-    // Whoever actually heard the cancellation — or may be hearing it right now.
+    /*
+     * The boundary between this cancellation and any earlier one. A date can
+     * be cancelled, restored, and cancelled again, and the earlier cycle's
+     * `sent` rows are kept on purpose — they really were sent. Without this
+     * bound they would be found again, and the roster would be corrected
+     * about a cancellation they never received.
+     */
+    const [lastRestored] = await tx
+      .select({ createdAt: emailDeliveries.createdAt })
+      .from(emailDeliveries)
+      .where(
+        and(
+          eq(emailDeliveries.sourceType, "class_occurrence"),
+          eq(emailDeliveries.sourceId, row.id),
+          eq(emailDeliveries.template, "class.restored"),
+        ),
+      )
+      .orderBy(desc(emailDeliveries.createdAt))
+      .limit(1);
+
+    /*
+     * Whoever actually heard the cancellation — or may be hearing it right
+     * now. Distinct, because one recipient can hold more than one matching
+     * row and each duplicate would become another copy of the same email.
+     */
     const told = await tx
-      .select({
+      .selectDistinct({
         userId: emailDeliveries.recipientUserId,
         email: emailDeliveries.recipientEmail,
       })
@@ -252,6 +301,7 @@ export async function restoreOccurrence(
           eq(emailDeliveries.sourceId, row.id),
           eq(emailDeliveries.template, "class.cancelled"),
           inArray(emailDeliveries.status, ["sent", "sending"]),
+          ...(lastRestored ? [gt(emailDeliveries.createdAt, lastRestored.createdAt)] : []),
         ),
       );
 
