@@ -1014,7 +1014,7 @@ so it validates the scenario end to end without isolating the zero-audience
 fix. A mutation that isolates a specific assertion is worth more than one that
 merely turns the file red.
 
-TO RESUME, in this order:
+TO RESUME — SUPERSEDED by the final-review entry at the end of this file:
 
 1. Task 11 fix round — ONE pass, three items:
    a. the untested `sending` branch in `restoreOccurrence` (test is already
@@ -1038,3 +1038,102 @@ Note on this file: it is now TRACKED (force-added past `.gitignore` on John's
 request), so it no longer updates silently — every plan change needs a commit
 or the pushed copy goes stale. The environment notes in the previous entry
 still hold.
+
+================================================================
+2026-10-09 (final) — BRANCH REVIEWED AND FIXED — RESUME HERE
+================================================================
+
+Task 11's fix round landed in `b0fb38d`, then the final whole-branch review of
+`f4b7208..HEAD` ran at `max` and its six findings landed in `77a349e`. Branch
+is 33 commits, pushed, local and remote 0/0. Nothing merged, no PR opened.
+
+THE HEADLINE: that review found THREE REAL PRODUCTION DEFECTS, all in
+cancel/restore, all missed by the four task-level reviews that came before it.
+Every one is only reachable on a second cancel/restore cycle or after an
+interrupted send, which is exactly why task-scoped review kept missing them —
+each task's diff looked correct in isolation. Lesson for the next phase: a
+whole-branch review over the full range is not a formality after per-task
+reviews, it is the only pass that sees state accumulating across operations.
+
+Fixed in `db/queries/class-occurrences.ts`:
+1. `told` selected every sent/sending cancellation for the occurrence with no
+   bound and no DISTINCT. Undoing a second cancellation found the first
+   cycle's sent rows and corrected a cancellation the family never received;
+   if both cycles had sent, one recipient got two copies. The previous
+   restoration is now the cycle boundary, and the select is DISTINCT.
+2. The restore cleanup deleted only `queued` cancellations, so a row left
+   `failed` by a provider 5xx stayed on the retry page with nothing marking it
+   obsolete — Retry would announce a cancellation for a running class, after
+   the correction had gone out. `failed` is now deleted too.
+3. `deliverBatchForSource` takes every queued row for a source regardless of
+   template, ordered by `createdAt`, so an interrupted restoration would be
+   flushed by the next cancellation's batch and the roster would read "going
+   ahead after all" immediately before being told it was cancelled. Cancelling
+   now drops stale reinstatements, mirroring restore's cleanup.
+
+THE SEVENTH INSTANCE of the pattern, and the worst so far: nothing asserted
+that `List-Unsubscribe` and `List-Unsubscribe-Post` reach the provider.
+Deleting the `unsubscribeHeaders` spread from `deliver.ts` left all 222 tests
+green — verified by actually doing it — while every broadcast shipped without
+RFC 8058 one-click support. The unit test covered the builder as a pure
+function, the capture transport discards the message, and the suites that mock
+`sendEmail` never inspected its argument. The completion checklist claimed
+this invariant was verified; it was not verified by anything.
+`tests/integration/deliver-unsubscribe-headers.test.ts` now covers it, decodes
+the token to confirm the address names that recipient, and asserts
+transactional mail carries neither header.
+
+Two more test defects: "tells exactly those people" seeded a roster of one, so
+every recipient had been told and an implementation ignoring the history
+passed identically — it now seeds a second login that was never mailed, which
+is also the gap that hid defect 1. And two unsubscribe-link assertions matched
+"/unsubscribe?u=" as a substring, which "/api/unsubscribe?u=" contains; both
+now compare the pathname.
+
+ALL SIX WERE MUTATION-TESTED, each mutation reverted and the file verified
+against HEAD afterwards:
+  headers spread deleted          -> new header test fails (previously green)
+  cycle bound removed             -> twice-cancelled test fails
+  delete reverted to queued-only  -> failed-retriable test fails
+  cancel-side cleanup removed     -> stale-restoration test fails
+  restore re-resolves the roster  -> "exactly those people" fails 2 != 1
+  footer renders the POST url     -> both pathname assertions fail
+
+A process note worth keeping: the first attempt at the cancel-side-cleanup
+mutation used a multi-line `perl -0pi` that silently matched only 5 lines of a
+12-line block, and reported all tests passing. That looked like "the test does
+not catch it" and nearly became a finding about the test. Check that a
+mutation actually applied — count the removed lines — before believing what it
+tells you. Line-addressed `sed` over a verified range is the reliable form.
+
+DEFERRED MINORS: all three ruled on and CLOSED, no change.
+1. `signUnsubscribeToken("")` fails closed and is unreachable from both call
+   sites; worst case is a dead link for an account that cannot exist.
+2. `setBroadcastOptOut(db, <unknown>, false)` already returns false, and the
+   only caller passes a session id.
+3. The column-width item was MIS-SCOPED. One line in `class-occurrences.ts`
+   exceeds 100 columns (177, at 104) while `app/api/unsubscribe/route.ts:44`
+   is 135, `e2e/fixtures/seed.ts:207` is 110, and three others are over. The
+   repo has no Prettier config and no `max-len` rule, so nothing enforces the
+   convention and hand-fixing one file would have left the rest. Either add
+   `printWidth` and reformat the branch in one pass, or drop it.
+
+VERIFIED AT THIS COMMIT: typecheck, 227 unit tests across 43 files, build,
+13/13 e2e, every `provider_message_id` beginning "capture-".
+
+TO RESUME:
+
+1. `superpowers:finishing-a-development-branch`. Every fix round is done and
+   every review finding is closed.
+2. BEFORE MERGING, consider `/code-review ultra` on this branch — John has to
+   trigger it, it cannot be launched from a session. The case for it: the
+   `max` review found three production defects that four task-level reviews
+   missed, so the marginal return on a deeper pass is demonstrated rather than
+   hypothetical. The case against: seven instances of the pattern have now
+   been found and fixed, and the cancel/restore mechanism has been gone over
+   closely.
+3. Raise with John at the end: `README.md` still says "Phase 1 complete" and
+   lists none of the new routes. Offered twice, deferred twice.
+
+Note on this file: it is TRACKED (force-added past `.gitignore`), so every
+plan change needs a commit or the pushed copy goes stale.
