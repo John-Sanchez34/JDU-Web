@@ -1,5 +1,6 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import { signIn, signUp } from "./fixtures/auth";
+import { cardOn, portalCellOn } from "./fixtures/locators";
 import {
   deliveriesForEnrollment,
   latestEnrollmentIdFor,
@@ -15,21 +16,6 @@ import {
  * same broken state four times.
  */
 test.describe.configure({ mode: "serial" });
-
-/** The public catalog card for one class, by its heading. */
-function cardOn(page: Page, className: string) {
-  return page.locator("article").filter({
-    has: page.getByRole("heading", { name: className }),
-  });
-}
-
-/** The portal cell wrapping a class card and its request form. */
-function portalCellOn(page: Page, className: string) {
-  return page
-    .locator("div")
-    .filter({ has: page.getByRole("heading", { name: className }) })
-    .last();
-}
 
 test.describe("enrollment", () => {
   let open: SeededClass;

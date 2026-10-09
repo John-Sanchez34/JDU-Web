@@ -245,3 +245,24 @@ export async function cancelledOccurrenceIdFor(className: string): Promise<strin
     return row.id;
   });
 }
+
+/**
+ * Whether a login has opted out of broadcasts, read from
+ * `user.broadcastOptedOutAt` directly.
+ *
+ * Deliberately not inferred from whether a later send reached them: an empty
+ * send cannot distinguish "not opted out" from "opted out, but that audience
+ * was empty anyway", and telling those two apart is the entire point of the
+ * assertion that uses this.
+ */
+export async function isBroadcastOptedOut(email: string): Promise<boolean> {
+  return withDb(async (db) => {
+    const [row] = await db
+      .select({ optedOutAt: user.broadcastOptedOutAt })
+      .from(user)
+      .where(eq(user.email, email))
+      .limit(1);
+    if (!row) throw new Error(`no user found for ${email}`);
+    return row.optedOutAt !== null;
+  });
+}
